@@ -117,12 +117,24 @@ jobs:
           for ISSUE_KEY in "${VALID_TICKET_ARRAY[@]}"; do
             ISSUE_KEY=$(echo "$ISSUE_KEY" | tr -d ' ')
             
-            # Escape commit message for JSON - use safer method
-            ESCAPED_COMMIT=$(printf '%s' "${{ env.COMMIT_MSG }}" | sed 's/"/\\"/g' | tr '\n' ' ')
+            # Create commit message with linked tickets for this comment
+            COMMIT_WITH_LINKS="${{ env.COMMIT_MSG }}"
+            
+            # Replace all ticket IDs in the commit message with JIRA links
+            IFS=',' read -ra ALL_TICKETS <<< "${{ env.ISSUE_KEYS }}"
+            for TICKET_ID in "${ALL_TICKETS[@]}"; do
+              TICKET_ID=$(echo "$TICKET_ID" | tr -d ' ')
+              [ -z "$TICKET_ID" ] && continue
+              COMMIT_WITH_LINKS="${COMMIT_WITH_LINKS//$TICKET_ID/[$TICKET_ID]($JIRA_BASE_CLEAN/browse/$TICKET_ID)}"
+            done
+            
+            # Escape the linked commit message for JSON
+            ESCAPED_COMMIT=$(printf '%s' "$COMMIT_WITH_LINKS" | sed 's/"/\\"/g' | tr '\n' ' ')
             
             echo "🔄 Posting comment to $ISSUE_KEY..."
+            echo "Debug: Comment will contain: $ESCAPED_COMMIT"
             
-            # Create simple JSON payload with clickable repository link
+            # Create JSON payload with clickable JIRA links in the commit message
             if timeout 15 curl -sf -X POST \
               -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
               -H "Content-Type: application/json" \
