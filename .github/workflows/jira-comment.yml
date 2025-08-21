@@ -40,7 +40,7 @@ jobs:
           JIRA_BASE_CLEAN="${{ secrets.JIRA_BASE_URL }}"
           JIRA_BASE_CLEAN="${JIRA_BASE_CLEAN%/}"
           
-          # Create commit message with clickable JIRA links
+          # Create commit message with clickable JIRA links (just URLs for JIRA comments)
           LINKED_COMMIT_MSG="${{ env.COMMIT_MSG }}"
           
           IFS=',' read -ra TICKET_ARRAY <<< "${{ env.ISSUE_KEYS }}"
@@ -48,9 +48,9 @@ jobs:
             ISSUE_KEY=$(echo "$ISSUE_KEY" | tr -d ' ')
             [ -z "$ISSUE_KEY" ] && continue
             
-            # Replace ticket ID with markdown link using parameter expansion
-            JIRA_LINK="[$ISSUE_KEY]($JIRA_BASE_CLEAN/browse/$ISSUE_KEY)"
-            LINKED_COMMIT_MSG="${LINKED_COMMIT_MSG//$ISSUE_KEY/$JIRA_LINK}"
+            # Replace ticket ID with just the URL (JIRA will auto-link it)
+            JIRA_URL="$JIRA_BASE_CLEAN/browse/$ISSUE_KEY"
+            LINKED_COMMIT_MSG="${LINKED_COMMIT_MSG//$ISSUE_KEY/$JIRA_URL}"
           done
           
           echo "LINKED_COMMIT_MSG=$LINKED_COMMIT_MSG" >> $GITHUB_ENV
