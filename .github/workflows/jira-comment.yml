@@ -130,26 +130,28 @@ jobs:
             
             echo "🔄 Posting comment to $ISSUE_KEY..."
             
-            # Create JSON payload with pre-escaped commit message
+            # Create a simple text comment with URLs that JIRA will auto-link
+            SIMPLE_COMMIT="${{ env.COMMIT_MSG }}"
+            
+            # Replace ticket IDs with plain URLs
+            IFS=',' read -ra ALL_TICKETS <<< "${{ env.ISSUE_KEYS }}"
+            for TICKET_ID in "${ALL_TICKETS[@]}"; do
+              TICKET_ID=$(echo "$TICKET_ID" | tr -d ' ')
+              [ -z "$TICKET_ID" ] && continue
+              TICKET_URL="$JIRA_BASE_CLEAN/browse/$TICKET_ID"
+              SIMPLE_COMMIT="${SIMPLE_COMMIT//$TICKET_ID/$TICKET_URL}"
+            done
+            
+            # Escape for JSON
+            ESCAPED_SIMPLE=$(printf '%s' "$SIMPLE_COMMIT" | sed 's/"/\\"/g' | tr '\n' ' ')
+            
+            # Use simple text format that JIRA will auto-link
             timeout 10 curl -sf -X POST \
               -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
               -H "Content-Type: application/json" \
               -H "Accept: application/json" \
               --data "{
-                \"body\": {
-                  \"type\": \"doc\",
-                  \"version\": 1,
-                  \"content\": [{
-                    \"type\": \"paragraph\",
-                    \"content\": [
-                      {\"type\": \"text\", \"text\": \"🚀 Commit \"},
-                      {\"type\": \"text\", \"text\": \"${{ github.sha }}\", \"marks\": [{\"type\": \"code\"}]},
-                      {\"type\": \"text\", \"text\": \" by ${{ github.actor }}\\n\\n🔗 Repository: \"},
-                      {\"type\": \"text\", \"text\": \"${{ github.repository }}\", \"marks\": [{\"type\": \"link\", \"attrs\": {\"href\": \"https://github.com/${{ github.repository }}\"}}]},
-                      {\"type\": \"text\", \"text\": \"\\n\\n💬 $ESCAPED_COMMIT\"}
-                    ]
-                  }]
-                }
+                \"body\": \"🚀 Commit ${{ github.sha }} by ${{ github.actor }}\n\n🔗 Repository: https://github.com/${{ github.repository }}\n\n💬 $ESCAPED_SIMPLE\"
               }" \
               "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY/comment" && \
             echo "✅ Successfully commented on $ISSUE_KEY" || \
