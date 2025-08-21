@@ -67,17 +67,40 @@ jobs:
           fi
           
           echo "✅ All secrets are accessible and have values"
+          
           # Test JIRA connectivity first
           echo "Testing JIRA connectivity..."
-          TEST_RESPONSE=$(curl -s -w "%{http_code}" -X GET \
-            -H "Authorization: Basic $(echo -n ${{ secrets.JIRA_EMAIL }}:${{ secrets.JIRA_API_TOKEN }} | base64)" \
+          echo "Debug: Attempting to connect to: $JIRA_BASE_SECRET/rest/api/3/issue/${{ env.ISSUE_KEY }}"
+          
+          # Add timeout and better error handling
+          set +e  # Don't exit on curl failure
+          TEST_RESPONSE=$(timeout 30 curl -s -w "%{http_code}" -X GET \
+            -H "Authorization: Basic $(echo -n $JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET | base64)" \
             -H "Content-Type: application/json" \
-            "${{ secrets.JIRA_BASE_URL }}/rest/api/3/issue/${{ env.ISSUE_KEY }}")
+            -H "Accept: application/json" \
+            "$JIRA_BASE_SECRET/rest/api/3/issue/${{ env.ISSUE_KEY }}" 2>&1)
+          
+          CURL_EXIT_CODE=$?
+          set -e  # Re-enable exit on error
+          
+          echo "Debug: Curl exit code: $CURL_EXIT_CODE"
+          
+          if [ $CURL_EXIT_CODE -eq 124 ]; then
+            echo "❌ Error: Request timed out (30 seconds)"
+            echo "💡 Check: JIRA_BASE_URL is correct and JIRA instance is accessible"
+            exit 1
+          elif [ $CURL_EXIT_CODE -ne 0 ]; then
+            echo "❌ Error: Curl failed with exit code $CURL_EXIT_CODE"
+            echo "Response: $TEST_RESPONSE"
+            echo "💡 Check: JIRA_BASE_URL format (should be https://company.atlassian.net)"
+            exit 1
+          fi
           
           TEST_HTTP_CODE=$(echo "$TEST_RESPONSE" | tail -c 4)
           TEST_BODY=$(echo "$TEST_RESPONSE" | head -c -4)
           
           echo "Debug: Test HTTP Status: $TEST_HTTP_CODE"
+          echo "Debug: Response body length: ${#TEST_BODY}"
           
           if [ "$TEST_HTTP_CODE" = "404" ]; then
             echo "❌ Error: JIRA ticket ${{ env.ISSUE_KEY }} not found"
@@ -102,11 +125,26 @@ jobs:
           
           # Now post the comment
           echo "Posting comment to JIRA..."
-          RESPONSE=$(curl -s -w "%{http_code}" -X POST \
-            -H "Authorization: Basic $(echo -n ${{ secrets.JIRA_EMAIL }}:${{ secrets.JIRA_API_TOKEN }} | base64)" \
+          
+          set +e  # Don't exit on curl failure
+          RESPONSE=$(timeout 30 curl -s -w "%{http_code}" -X POST \
+            -H "Authorization: Basic $(echo -n $JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET | base64)" \
             -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
             --data "{\"body\": \"Commit ${{ github.sha }} by ${{ github.actor }}: ${{ env.COMMIT_MSG }}\"}" \
-            "${{ secrets.JIRA_BASE_URL }}/rest/api/3/issue/${{ env.ISSUE_KEY }}/comment")
+            "$JIRA_BASE_SECRET/rest/api/3/issue/${{ env.ISSUE_KEY }}/comment" 2>&1)
+          
+          CURL_EXIT_CODE=$?
+          set -e  # Re-enable exit on error
+          
+          if [ $CURL_EXIT_CODE -eq 124 ]; then
+            echo "❌ Error: Comment request timed out (30 seconds)"
+            exit 1
+          elif [ $CURL_EXIT_CODE -ne 0 ]; then
+            echo "❌ Error: Comment curl failed with exit code $CURL_EXIT_CODE"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
           
           HTTP_CODE=$(echo "$RESPONSE" | tail -c 4)
           BODY=$(echo "$RESPONSE" | head -c -4)
