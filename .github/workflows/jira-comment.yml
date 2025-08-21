@@ -107,47 +107,65 @@ jobs:
           
           # First test authentication with a simple endpoint
           echo "Testing JIRA authentication..."
-          AUTH_URL="$JIRA_BASE_CLEAN/rest/api/3/myself"
-          echo "Debug: Testing auth with: $AUTH_URL"
+          echo "Debug: Base URL: '$JIRA_BASE_CLEAN'"
+          echo "Debug: Constructing auth URL..."
+          
+          # Construct URL more explicitly
+          BASE_URL="https://dootrexian.atlassian.net"
+          AUTH_URL="$BASE_URL/rest/api/3/myself"
+          echo "Debug: Auth URL: $AUTH_URL"
           
           set +e
-          AUTH_RESPONSE=$(timeout 30 curl -s -w "%{http_code}" -X GET \
+          AUTH_RESPONSE=$(timeout 30 curl -k -s -w "%{http_code}" -X GET \
             -H "Authorization: Basic $(echo -n $JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET | base64)" \
             -H "Content-Type: application/json" \
             -H "Accept: application/json" \
+            -H "User-Agent: GitHub-Actions/1.0" \
             "$AUTH_URL" 2>&1)
           
           AUTH_EXIT_CODE=$?
           set -e
           
           echo "Debug: Auth test exit code: $AUTH_EXIT_CODE"
+          echo "Debug: Auth response length: ${#AUTH_RESPONSE}"
           
           if [ $AUTH_EXIT_CODE -eq 0 ]; then
             AUTH_HTTP_CODE=$(echo "$AUTH_RESPONSE" | tail -c 4)
             echo "Debug: Auth HTTP Status: $AUTH_HTTP_CODE"
             if [ "$AUTH_HTTP_CODE" = "200" ]; then
               echo "✅ JIRA authentication successful"
+            elif [ "$AUTH_HTTP_CODE" = "401" ]; then
+              echo "❌ JIRA authentication failed - Invalid credentials"
+              AUTH_BODY=$(echo "$AUTH_RESPONSE" | head -c -4)
+              echo "Auth response: $AUTH_BODY"
+              echo "💡 Check your JIRA_EMAIL and JIRA_API_TOKEN values"
+              exit 1
             else
               echo "❌ JIRA authentication failed with HTTP $AUTH_HTTP_CODE"
               AUTH_BODY=$(echo "$AUTH_RESPONSE" | head -c -4)
               echo "Auth response: $AUTH_BODY"
+              exit 1
             fi
           else
             echo "❌ Auth test failed with exit code $AUTH_EXIT_CODE"
             echo "Auth response: $AUTH_RESPONSE"
+            if [ $AUTH_EXIT_CODE -eq 43 ]; then
+              echo "💡 This might be an SSL/TLS issue. Trying with different approach..."
+            fi
+            exit 1
           fi
           
           # Now test the specific issue endpoint
-          API_URL="$JIRA_BASE_CLEAN/rest/api/3/issue/${{ env.ISSUE_KEY }}"
-          echo "Debug: Testing issue endpoint: $API_URL"
-          echo "Debug: URL length: ${#API_URL}"
+          API_URL="$BASE_URL/rest/api/3/issue/${{ env.ISSUE_KEY }}"
+          echo "Debug: Issue endpoint: $API_URL"
           
           # Add timeout and better error handling
           set +e  # Don't exit on curl failure
-          TEST_RESPONSE=$(timeout 30 curl -s -w "%{http_code}" -X GET \
+          TEST_RESPONSE=$(timeout 30 curl -k -s -w "%{http_code}" -X GET \
             -H "Authorization: Basic $(echo -n $JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET | base64)" \
             -H "Content-Type: application/json" \
             -H "Accept: application/json" \
+            -H "User-Agent: GitHub-Actions/1.0" \
             "$API_URL" 2>&1)
           
           CURL_EXIT_CODE=$?
@@ -197,12 +215,13 @@ jobs:
           echo "Posting comment to JIRA..."
           
           set +e  # Don't exit on curl failure
-          RESPONSE=$(timeout 30 curl -s -w "%{http_code}" -X POST \
+          RESPONSE=$(timeout 30 curl -k -s -w "%{http_code}" -X POST \
             -H "Authorization: Basic $(echo -n $JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET | base64)" \
             -H "Content-Type: application/json" \
             -H "Accept: application/json" \
+            -H "User-Agent: GitHub-Actions/1.0" \
             --data "{\"body\": \"Commit ${{ github.sha }} by ${{ github.actor }}: ${{ env.COMMIT_MSG }}\"}" \
-            "$JIRA_BASE_CLEAN/rest/api/3/issue/${{ env.ISSUE_KEY }}/comment" 2>&1)
+            "$BASE_URL/rest/api/3/issue/${{ env.ISSUE_KEY }}/comment" 2>&1)
           
           CURL_EXIT_CODE=$?
           set -e  # Re-enable exit on error
