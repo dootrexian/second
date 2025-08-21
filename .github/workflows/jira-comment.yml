@@ -199,3 +199,5 @@ jobs:
           echo "## Summary" >> $GITHUB_STEP_SUMMARY
           echo "**Original commit message:** ${{ env.COMMIT_MSG }}" >> $GITHUB_STEP_SUMMARY
           echo "**With JIRA links:** ${{ env.LINKED_COMMIT_MSG }}" >> $GITHUB_STEP_SUMMARY
+
+
