@@ -35,7 +35,61 @@ jobs:
           echo "Debug: Commenting on JIRA ticket: ${{ env.ISSUE_KEY }}"
           echo "Debug: Commit SHA: ${{ github.sha }}"
           echo "Debug: Actor: ${{ github.actor }}"
+          echo "Debug: JIRA Base URL: ${{ secrets.JIRA_BASE_URL }}"
           
+          # Check if secrets are set
+          if [ -z "${{ secrets.JIRA_EMAIL }}" ]; then
+            echo "❌ Error: JIRA_EMAIL secret is not set"
+            exit 1
+          fi
+          
+          if [ -z "${{ secrets.JIRA_API_TOKEN }}" ]; then
+            echo "❌ Error: JIRA_API_TOKEN secret is not set"
+            exit 1
+          fi
+          
+          if [ -z "${{ secrets.JIRA_BASE_URL }}" ]; then
+            echo "❌ Error: JIRA_BASE_URL secret is not set"
+            exit 1
+          fi
+          
+          echo "✅ All secrets are configured"
+          
+          # Test JIRA connectivity first
+          echo "Testing JIRA connectivity..."
+          TEST_RESPONSE=$(curl -s -w "%{http_code}" -X GET \
+            -H "Authorization: Basic $(echo -n ${{ secrets.JIRA_EMAIL }}:${{ secrets.JIRA_API_TOKEN }} | base64)" \
+            -H "Content-Type: application/json" \
+            "${{ secrets.JIRA_BASE_URL }}/rest/api/3/issue/${{ env.ISSUE_KEY }}")
+          
+          TEST_HTTP_CODE=$(echo "$TEST_RESPONSE" | tail -c 4)
+          TEST_BODY=$(echo "$TEST_RESPONSE" | head -c -4)
+          
+          echo "Debug: Test HTTP Status: $TEST_HTTP_CODE"
+          
+          if [ "$TEST_HTTP_CODE" = "404" ]; then
+            echo "❌ Error: JIRA ticket ${{ env.ISSUE_KEY }} not found"
+            echo "Response: $TEST_BODY"
+            exit 1
+          elif [ "$TEST_HTTP_CODE" = "401" ]; then
+            echo "❌ Error: Authentication failed. Check JIRA_EMAIL and JIRA_API_TOKEN"
+            echo "Response: $TEST_BODY"
+            exit 1
+          elif [ "$TEST_HTTP_CODE" = "403" ]; then
+            echo "❌ Error: Permission denied. User may not have access to this ticket"
+            echo "Response: $TEST_BODY"
+            exit 1
+          elif [ "$TEST_HTTP_CODE" != "200" ]; then
+            echo "❌ Error: Unexpected response when checking ticket"
+            echo "HTTP Status: $TEST_HTTP_CODE"
+            echo "Response: $TEST_BODY"
+            exit 1
+          fi
+          
+          echo "✅ JIRA ticket ${{ env.ISSUE_KEY }} exists and is accessible"
+          
+          # Now post the comment
+          echo "Posting comment to JIRA..."
           RESPONSE=$(curl -s -w "%{http_code}" -X POST \
             -H "Authorization: Basic $(echo -n ${{ secrets.JIRA_EMAIL }}:${{ secrets.JIRA_API_TOKEN }} | base64)" \
             -H "Content-Type: application/json" \
@@ -45,8 +99,8 @@ jobs:
           HTTP_CODE=$(echo "$RESPONSE" | tail -c 4)
           BODY=$(echo "$RESPONSE" | head -c -4)
           
-          echo "Debug: HTTP Status: $HTTP_CODE"
-          echo "Debug: Response: $BODY"
+          echo "Debug: Comment HTTP Status: $HTTP_CODE"
+          echo "Debug: Comment Response: $BODY"
           
           if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
             echo "✅ Successfully commented on JIRA ticket ${{ env.ISSUE_KEY }}"
