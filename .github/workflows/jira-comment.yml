@@ -46,7 +46,6 @@ jobs:
           # Process tickets and post comments
           IFS=',' read -ra TICKET_ARRAY <<< "${{ env.ISSUE_KEYS }}"
           VALID_TICKETS=""
-          TICKET_LINK_MAP=""
           
           for ISSUE_KEY in "${TICKET_ARRAY[@]}"; do
             ISSUE_KEY=$(echo "$ISSUE_KEY" | tr -d ' ')
@@ -57,12 +56,7 @@ jobs:
                "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY" >/dev/null 2>&1; then
               
               echo "✅ $ISSUE_KEY accessible"
-              
-              # Add to valid tickets
               VALID_TICKETS="${VALID_TICKETS:+$VALID_TICKETS,}$ISSUE_KEY"
-              
-              # Build map for ticket replacement in commit message
-              TICKET_LINK_MAP="${TICKET_LINK_MAP}${ISSUE_KEY}|[$ISSUE_KEY]($JIRA_BASE_CLEAN/browse/$ISSUE_KEY) "
             else
               echo "⚠️ $ISSUE_KEY not accessible"
             fi
@@ -70,14 +64,36 @@ jobs:
           
           [ -z "$VALID_TICKETS" ] && { echo "❌ No valid tickets found"; exit 1; }
           
-          # Create enhanced commit message with ticket links
-          ENHANCED_COMMIT_MSG="${{ env.COMMIT_MSG }}"
+          # Create JIRA comment with clickable links
+          COMMIT_MESSAGE="${{ env.COMMIT_MSG }}"
+          
+          # Create base comment structure
+          JIRA_PAYLOAD="{\"body\": {\"type\": \"doc\", \"version\": 1, \"content\": [{\"type\": \"paragraph\", \"content\": ["
+          JIRA_PAYLOAD="${JIRA_PAYLOAD}{\"type\": \"text\", \"text\": \"🚀 Commit \"},"
+          JIRA_PAYLOAD="${JIRA_PAYLOAD}{\"type\": \"text\", \"text\": \"${{ github.sha }}\", \"marks\": [{\"type\": \"code\"}]},"
+          JIRA_PAYLOAD="${JIRA_PAYLOAD}{\"type\": \"text\", \"text\": \" by ${{ github.actor }}\\n\\n🔗 Repository: \"},"
+          JIRA_PAYLOAD="${JIRA_PAYLOAD}{\"type\": \"text\", \"text\": \"${{ github.repository }}\", \"marks\": [{\"type\": \"link\", \"attrs\": {\"href\": \"https://github.com/${{ github.repository }}\"}}]},"
+          JIRA_PAYLOAD="${JIRA_PAYLOAD}{\"type\": \"text\", \"text\": \"\\n\\n💬 Referenced tickets: \"}"
+          
+          # Add ticket links
           IFS=',' read -ra VALID_TICKET_ARRAY <<< "$VALID_TICKETS"
+          FIRST_TICKET=true
           for ISSUE_KEY in "${VALID_TICKET_ARRAY[@]}"; do
             ISSUE_KEY=$(echo "$ISSUE_KEY" | tr -d ' ')
-            # Replace all instances of the ticket ID with links (using different delimiter to avoid slash issues)
-            ENHANCED_COMMIT_MSG=$(echo "$ENHANCED_COMMIT_MSG" | sed "s|${ISSUE_KEY}|[$ISSUE_KEY]($JIRA_BASE_CLEAN/browse/$ISSUE_KEY)|g")
+            if [ "$FIRST_TICKET" = true ]; then
+              FIRST_TICKET=false
+            else
+              JIRA_PAYLOAD="${JIRA_PAYLOAD},{\"type\": \"text\", \"text\": \", \"}"
+            fi
+            JIRA_PAYLOAD="${JIRA_PAYLOAD},{\"type\": \"text\", \"text\": \"$ISSUE_KEY\", \"marks\": [{\"type\": \"link\", \"attrs\": {\"href\": \"$JIRA_BASE_CLEAN/browse/$ISSUE_KEY\"}}]}"
           done
+          
+          # Add commit message
+          ESCAPED_COMMIT=$(echo "$COMMIT_MESSAGE" | sed 's/"/\\"/g' | sed 's/\\/\\\\/g')
+          JIRA_PAYLOAD="${JIRA_PAYLOAD},{\"type\": \"text\", \"text\": \"\\n\\nCommit message: $ESCAPED_COMMIT\"}"
+          
+          # Close the JSON structure
+          JIRA_PAYLOAD="${JIRA_PAYLOAD}]}]}}"
           
           # Post comments to valid tickets
           IFS=',' read -ra VALID_TICKET_ARRAY <<< "$VALID_TICKETS"
@@ -86,7 +102,7 @@ jobs:
             
             if timeout 15 curl -sf -X POST -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
                -H "Content-Type: application/json" \
-               --data "{\"body\": {\"type\": \"doc\", \"version\": 1, \"content\": [{\"type\": \"paragraph\", \"content\": [{\"type\": \"text\", \"text\": \"🚀 Commit \"}, {\"type\": \"text\", \"text\": \"${{ github.sha }}\", \"marks\": [{\"type\": \"code\"}]}, {\"type\": \"text\", \"text\": \" by ${{ github.actor }}\\n\\n� Repository: \"}, {\"type\": \"text\", \"text\": \"${{ github.repository }}\", \"marks\": [{\"type\": \"link\", \"attrs\": {\"href\": \"https://github.com/${{ github.repository }}\"}}]}, {\"type\": \"text\", \"text\": \"\\n\\n💬 $ENHANCED_COMMIT_MSG\"}]}]}}" \
+               --data "$JIRA_PAYLOAD" \
                "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY/comment" >/dev/null 2>&1; then
               echo "✅ Commented on $ISSUE_KEY"
             else
