@@ -17,301 +17,68 @@ jobs:
         run: |
           COMMIT_MSG=$(git log -1 --pretty=%B)
           echo "COMMIT_MSG=$COMMIT_MSG" >> $GITHUB_ENV
-          echo "Debug: Full commit message: $COMMIT_MSG"
           
-          # Extract all JIRA ticket references (case-insensitive, handle comma and space separators)
+          # Extract all JIRA ticket references (case-insensitive)
           ISSUE_KEYS=$(echo "$COMMIT_MSG" | grep -oiE 'gj-?[0-9]+' | tr '[:lower:]' '[:upper:]' | sort -u | tr '\n' ',' | sed 's/,$//' || true)
           echo "ISSUE_KEYS=$ISSUE_KEYS" >> $GITHUB_ENV
-          echo "Debug: Extracted JIRA keys: '$ISSUE_KEYS'"
           
-          if [ -z "$ISSUE_KEYS" ]; then
-            echo "Debug: No JIRA tickets found in commit message"
-          else
-            # Count the number of tickets
-            TICKET_COUNT=$(echo "$ISSUE_KEYS" | tr ',' '\n' | wc -l)
-            echo "Debug: Found $TICKET_COUNT JIRA ticket(s): $ISSUE_KEYS"
+          if [ -n "$ISSUE_KEYS" ]; then
+            echo "Found JIRA tickets: $ISSUE_KEYS"
           fi
 
       - name: Comment on Jira
         if: env.ISSUE_KEYS != ''
         run: |
-          echo "Debug: Processing JIRA tickets: ${{ env.ISSUE_KEYS }}"
-          echo "Debug: Commit SHA: ${{ github.sha }}"
-          echo "Debug: Actor: ${{ github.actor }}"
-          echo "Debug: Repository: ${{ github.repository }}"
-          echo "Debug: Repository Owner: ${{ github.repository_owner }}"
-          echo "Debug: JIRA Base URL: '${{ secrets.JIRA_BASE_URL }}'"
-          
+          # Get secrets
           JIRA_EMAIL_SECRET="${{ secrets.JIRA_EMAIL }}"
           JIRA_TOKEN_SECRET="${{ secrets.JIRA_API_TOKEN }}"
           JIRA_BASE_SECRET="${{ secrets.JIRA_BASE_URL }}"
           
-          echo "Debug: JIRA Email length: ${#JIRA_EMAIL_SECRET}"
-          echo "Debug: JIRA Token length: ${#JIRA_TOKEN_SECRET}"
-          echo "Debug: JIRA Base length: ${#JIRA_BASE_SECRET}"
-          
-          # Check if secrets are accessible AND have values
-          if [ -z "$JIRA_EMAIL_SECRET" ]; then
-            echo "❌ Error: JIRA_EMAIL secret is empty or not accessible"
-            echo "💡 Check: Organization secret JIRA_EMAIL has a valid email address"
+          # Quick secret validation
+          if [ -z "$JIRA_EMAIL_SECRET" ] || [ -z "$JIRA_TOKEN_SECRET" ] || [ -z "$JIRA_BASE_SECRET" ]; then
+            echo "❌ Missing JIRA secrets. Check organization secrets: JIRA_EMAIL, JIRA_API_TOKEN, JIRA_BASE_URL"
             exit 1
           fi
           
-          if [ -z "$JIRA_TOKEN_SECRET" ]; then
-            echo "❌ Error: JIRA_API_TOKEN secret is empty or not accessible"
-            echo "💡 Check: Organization secret JIRA_API_TOKEN has a valid API token"
-            exit 1
-          fi
-          
-          if [ -z "$JIRA_BASE_SECRET" ]; then
-            echo "❌ Error: JIRA_BASE_URL secret is empty or not accessible"
-            echo "💡 Check: Organization secret JIRA_BASE_URL has a valid URL (e.g., https://company.atlassian.net)"
-            exit 1
-          fi
-          
-          echo "✅ All secrets are accessible and have values"
-          
-          # Validate JIRA_BASE_URL format
-          echo "Debug: Validating JIRA Base URL format..."
-          if [[ ! "$JIRA_BASE_SECRET" =~ ^https?:// ]]; then
-            echo "❌ Error: JIRA_BASE_URL must start with http:// or https://"
-            echo "Current value starts with: $(echo "$JIRA_BASE_SECRET" | head -c 10)..."
-            echo "💡 Expected format: https://yourcompany.atlassian.net"
-            exit 1
-          fi
-          
-          # Remove trailing slash if present
+          # Clean base URL
           JIRA_BASE_CLEAN=$(echo "$JIRA_BASE_SECRET" | sed 's/\/$//')
-          echo "Debug: Cleaned JIRA Base URL: $JIRA_BASE_CLEAN"
           
-          # Test basic connectivity first
-          echo "Testing basic JIRA connectivity..."
-          echo "Debug: Attempting basic connection to: $JIRA_BASE_CLEAN"
-          
-          set +e  # Don't exit on curl failure
-          BASIC_TEST=$(timeout 15 curl -s -w "%{http_code}" -I "$JIRA_BASE_CLEAN" 2>&1)
-          BASIC_EXIT_CODE=$?
-          set -e
-          
-          echo "Debug: Basic connectivity exit code: $BASIC_EXIT_CODE"
-          echo "Debug: Basic connectivity response: $BASIC_TEST"
-          
-          if [ $BASIC_EXIT_CODE -ne 0 ]; then
-            echo "❌ Error: Cannot reach JIRA instance at $JIRA_BASE_CLEAN"
-            echo "💡 Common issues:"
-            echo "   - Wrong URL (check your JIRA instance URL)"
-            echo "   - Network connectivity"
-            echo "   - JIRA instance is down"
-            exit 1
-          fi
-          
-          # Test JIRA API connectivity
-          echo "Testing JIRA API connectivity..."
-          
-          # First test authentication with a simple endpoint
-          echo "Testing JIRA authentication..."
-          echo "Debug: Base URL: '$JIRA_BASE_CLEAN'"
-          
-          # Use the cleaned base URL for authentication test
-          AUTH_URL="$JIRA_BASE_CLEAN/rest/api/3/myself"
-          echo "Debug: Auth URL: $AUTH_URL"
-          
-          set +e
-          AUTH_RESPONSE=$(timeout 30 curl -s -w "%{http_code}" \
-            -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
-            -H "Accept: application/json" \
-            "$AUTH_URL" 2>&1)
-          
-          AUTH_EXIT_CODE=$?
-          set -e
-          
-          echo "Debug: Auth test exit code: $AUTH_EXIT_CODE"
-          echo "Debug: Auth response length: ${#AUTH_RESPONSE}"
-          
-          if [ $AUTH_EXIT_CODE -eq 0 ]; then
-            AUTH_HTTP_CODE=$(echo "$AUTH_RESPONSE" | tail -c 4)
-            echo "Debug: Auth HTTP Status: $AUTH_HTTP_CODE"
-            if [ "$AUTH_HTTP_CODE" = "200" ]; then
-              echo "✅ JIRA authentication successful"
-            elif [ "$AUTH_HTTP_CODE" = "401" ]; then
-              echo "❌ JIRA authentication failed - Invalid credentials"
-              AUTH_BODY=$(echo "$AUTH_RESPONSE" | head -c -4)
-              echo "Auth response: $AUTH_BODY"
-              echo "💡 Check your JIRA_EMAIL and JIRA_API_TOKEN values"
-              exit 1
-            else
-              echo "❌ JIRA authentication failed with HTTP $AUTH_HTTP_CODE"
-              AUTH_BODY=$(echo "$AUTH_RESPONSE" | head -c -4)
-              echo "Auth response: $AUTH_BODY"
-              exit 1
-            fi
-          elif [ $AUTH_EXIT_CODE -eq 92 ]; then
-            echo "⚠️ HTTP/2 protocol error detected. Trying HTTP/1.1 fallback..."
-            
-            # Try with HTTP/1.1 as fallback
-            AUTH_RESPONSE_FALLBACK=$(timeout 30 curl -s -w "%{http_code}" --http1.1 \
-              -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
-              -H "Accept: application/json" \
-              "$AUTH_URL" 2>&1)
-            
-            FALLBACK_EXIT_CODE=$?
-            echo "Debug: Fallback exit code: $FALLBACK_EXIT_CODE"
-            
-            if [ $FALLBACK_EXIT_CODE -eq 0 ]; then
-              FALLBACK_HTTP_CODE=$(echo "$AUTH_RESPONSE_FALLBACK" | tail -c 4)
-              echo "Debug: Fallback HTTP Status: $FALLBACK_HTTP_CODE"
-              
-              if [ "$FALLBACK_HTTP_CODE" = "200" ]; then
-                echo "✅ JIRA authentication successful with HTTP/1.1 fallback!"
-              else
-                echo "❌ Fallback also failed with HTTP $FALLBACK_HTTP_CODE"
-                FALLBACK_BODY=$(echo "$AUTH_RESPONSE_FALLBACK" | head -c -4)
-                echo "Fallback response: $FALLBACK_BODY"
-                exit 1
-              fi
-            else
-              echo "❌ Both HTTP/2 and HTTP/1.1 attempts failed"
-              echo "Fallback response: $AUTH_RESPONSE_FALLBACK"
-              exit 1
-            fi
-          else
-            echo "❌ Auth test failed with exit code $AUTH_EXIT_CODE"
-            echo "Auth response: $AUTH_RESPONSE"
-            if [ $AUTH_EXIT_CODE -eq 43 ]; then
-              echo "💡 This might be an SSL/TLS issue. Trying with different approach..."
-            fi
-            exit 1
-          fi
-          
-          # Convert comma-separated list to array and process each ticket
+          # Process tickets and post comments
           IFS=',' read -ra TICKET_ARRAY <<< "${{ env.ISSUE_KEYS }}"
           VALID_TICKETS=""
           TICKET_LINKS=""
           
           for ISSUE_KEY in "${TICKET_ARRAY[@]}"; do
-            # Trim whitespace
             ISSUE_KEY=$(echo "$ISSUE_KEY" | tr -d ' ')
+            [ -z "$ISSUE_KEY" ] && continue
             
-            if [ -z "$ISSUE_KEY" ]; then
-              continue
-            fi
-            
-            echo "🔍 Checking JIRA ticket: $ISSUE_KEY"
-            
-            # Test the specific issue endpoint
-            API_URL="$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY"
-            echo "Debug: Issue endpoint: $API_URL"
-            
-            # Add timeout and better error handling
-            set +e  # Don't exit on curl failure
-            TEST_RESPONSE=$(timeout 30 curl -s -w "%{http_code}" \
-              -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
-              -H "Accept: application/json" \
-              "$API_URL" 2>&1)
-            
-            CURL_EXIT_CODE=$?
-            set -e  # Re-enable exit on error
-            
-            echo "Debug: Curl exit code for $ISSUE_KEY: $CURL_EXIT_CODE"
-            
-            if [ $CURL_EXIT_CODE -eq 124 ]; then
-              echo "⚠️ Warning: Request timed out for $ISSUE_KEY (30 seconds)"
-              continue
-            elif [ $CURL_EXIT_CODE -ne 0 ]; then
-              echo "⚠️ Warning: Curl failed for $ISSUE_KEY with exit code $CURL_EXIT_CODE"
-              echo "Response: $TEST_RESPONSE"
-              continue
-            fi
-            
-            TEST_HTTP_CODE=$(echo "$TEST_RESPONSE" | tail -c 4)
-            TEST_BODY=$(echo "$TEST_RESPONSE" | head -c -4)
-            
-            echo "Debug: Test HTTP Status for $ISSUE_KEY: $TEST_HTTP_CODE"
-            
-            if [ "$TEST_HTTP_CODE" = "404" ]; then
-              echo "⚠️ Warning: JIRA ticket $ISSUE_KEY not found"
-              continue
-            elif [ "$TEST_HTTP_CODE" = "401" ]; then
-              echo "❌ Error: Authentication failed. Check JIRA_EMAIL and JIRA_API_TOKEN"
-              echo "Response: $TEST_BODY"
-              exit 1
-            elif [ "$TEST_HTTP_CODE" = "403" ]; then
-              echo "⚠️ Warning: Permission denied for $ISSUE_KEY. User may not have access to this ticket"
-              continue
-            elif [ "$TEST_HTTP_CODE" != "200" ]; then
-              echo "⚠️ Warning: Unexpected response for $ISSUE_KEY"
-              echo "HTTP Status: $TEST_HTTP_CODE"
-              continue
-            fi
-            
-            echo "✅ JIRA ticket $ISSUE_KEY exists and is accessible"
-            
-            # Add to valid tickets list
-            if [ -z "$VALID_TICKETS" ]; then
-              VALID_TICKETS="$ISSUE_KEY"
+            # Quick ticket validation
+            if curl -sf -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
+               "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY" > /dev/null; then
+              
+              echo "✅ $ISSUE_KEY accessible"
+              
+              # Add to valid lists
+              VALID_TICKETS="${VALID_TICKETS:+$VALID_TICKETS,}$ISSUE_KEY"
+              TICKET_LINKS="${TICKET_LINKS:+$TICKET_LINKS, }[$ISSUE_KEY]($JIRA_BASE_CLEAN/browse/$ISSUE_KEY)"
             else
-              VALID_TICKETS="$VALID_TICKETS,$ISSUE_KEY"
-            fi
-            
-            # Create ticket link for the comment
-            TICKET_LINK="[$ISSUE_KEY]($JIRA_BASE_CLEAN/browse/$ISSUE_KEY)"
-            if [ -z "$TICKET_LINKS" ]; then
-              TICKET_LINKS="$TICKET_LINK"
-            else
-              TICKET_LINKS="$TICKET_LINKS, $TICKET_LINK"
+              echo "⚠️ $ISSUE_KEY not accessible"
             fi
           done
           
-          if [ -z "$VALID_TICKETS" ]; then
-            echo "❌ Error: No valid JIRA tickets found or accessible"
-            exit 1
-          fi
+          [ -z "$VALID_TICKETS" ] && { echo "❌ No valid tickets found"; exit 1; }
           
-          echo "✅ Found $(echo "$VALID_TICKETS" | tr ',' '\n' | wc -l) valid JIRA ticket(s): $VALID_TICKETS"
-          echo "Debug: Ticket links: $TICKET_LINKS"
-          
-          # Now post comments to all valid tickets
-          echo "📝 Posting comments to JIRA tickets..."
-          
+          # Post comments to valid tickets
           IFS=',' read -ra VALID_TICKET_ARRAY <<< "$VALID_TICKETS"
           for ISSUE_KEY in "${VALID_TICKET_ARRAY[@]}"; do
-            # Trim whitespace
             ISSUE_KEY=$(echo "$ISSUE_KEY" | tr -d ' ')
             
-            echo "💬 Commenting on $ISSUE_KEY..."
-            
-            set +e  # Don't exit on curl failure
-            RESPONSE=$(timeout 30 curl -s -w "%{http_code}" -X POST \
-              -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
-              -H "Content-Type: application/json" \
-              -H "Accept: application/json" \
-              --data "{\"body\": {\"type\": \"doc\", \"version\": 1, \"content\": [{\"type\": \"paragraph\", \"content\": [{\"type\": \"text\", \"text\": \"🚀 Commit \"}, {\"type\": \"text\", \"text\": \"${{ github.sha }}\", \"marks\": [{\"type\": \"code\"}]}, {\"type\": \"text\", \"text\": \" by ${{ github.actor }}\\n\\n📋 Related tickets: $TICKET_LINKS\\n\\n💬 Commit message: ${{ env.COMMIT_MSG }}\"}]}]}}" \
-              "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY/comment" 2>&1)
-            
-            CURL_EXIT_CODE=$?
-            set -e  # Re-enable exit on error
-            
-            if [ $CURL_EXIT_CODE -eq 124 ]; then
-              echo "⚠️ Warning: Comment request timed out for $ISSUE_KEY (30 seconds)"
-              continue
-            elif [ $CURL_EXIT_CODE -ne 0 ]; then
-              echo "⚠️ Warning: Comment curl failed for $ISSUE_KEY with exit code $CURL_EXIT_CODE"
-              echo "Response: $RESPONSE"
-              continue
-            fi
-            
-            HTTP_CODE=$(echo "$RESPONSE" | tail -c 4)
-            BODY=$(echo "$RESPONSE" | head -c -4)
-            
-            echo "Debug: Comment HTTP Status for $ISSUE_KEY: $HTTP_CODE"
-            
-            if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-              echo "✅ Successfully commented on JIRA ticket $ISSUE_KEY"
+            if curl -sf -X POST -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
+               -H "Content-Type: application/json" \
+               --data "{\"body\": {\"type\": \"doc\", \"version\": 1, \"content\": [{\"type\": \"paragraph\", \"content\": [{\"type\": \"text\", \"text\": \"🚀 Commit \"}, {\"type\": \"text\", \"text\": \"${{ github.sha }}\", \"marks\": [{\"type\": \"code\"}]}, {\"type\": \"text\", \"text\": \" by ${{ github.actor }}\\n\\n📋 Related tickets: $TICKET_LINKS\\n\\n💬 ${{ env.COMMIT_MSG }}\"}]}]}}" \
+               "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY/comment" > /dev/null; then
+              echo "✅ Commented on $ISSUE_KEY"
             else
-              echo "⚠️ Warning: Failed to comment on JIRA ticket $ISSUE_KEY. HTTP Status: $HTTP_CODE"
-              echo "Response: $BODY"
+              echo "⚠️ Failed to comment on $ISSUE_KEY"
             fi
           done
-          
-          echo ""
-          echo "🎉 Comment posting completed for all valid tickets!"
