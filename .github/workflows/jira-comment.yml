@@ -59,7 +59,7 @@ jobs:
 
       - name: Comment on Jira
         if: env.ISSUE_KEYS != ''
-        timeout-minutes: 5
+        timeout-minutes: 3
         run: |
           set -e  # Exit on any error
           
@@ -82,6 +82,16 @@ jobs:
           JIRA_BASE_CLEAN="${JIRA_BASE_SECRET%/}"
           echo "Debug: JIRA base URL: $JIRA_BASE_CLEAN"
           
+          # Pre-generate the commit message with links (reuse from previous step)
+          COMMIT_WITH_LINKS="${{ env.LINKED_COMMIT_MSG }}"
+          if [ -z "$COMMIT_WITH_LINKS" ]; then
+            COMMIT_WITH_LINKS="${{ env.COMMIT_MSG }}"
+          fi
+          
+          # Escape the commit message for JSON once
+          ESCAPED_COMMIT=$(printf '%s' "$COMMIT_WITH_LINKS" | sed 's/"/\\"/g' | tr '\n' ' ')
+          echo "Debug: Final commit message: $ESCAPED_COMMIT"
+          
           # Process tickets and post comments
           IFS=',' read -ra TICKET_ARRAY <<< "${{ env.ISSUE_KEYS }}"
           VALID_TICKETS=""
@@ -95,7 +105,7 @@ jobs:
             echo "Debug: Validating ticket $ISSUE_KEY..."
             
             # Quick ticket validation with timeout
-            if timeout 10 curl -sf -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
+            if timeout 8 curl -sf -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
                "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY" >/dev/null 2>&1; then
               
               echo "✅ $ISSUE_KEY accessible"
@@ -112,30 +122,16 @@ jobs:
           
           echo "Debug: Valid tickets: $VALID_TICKETS"
           
-          # Post comments to valid tickets with clickable links
+          # Post comments to valid tickets
           IFS=',' read -ra VALID_TICKET_ARRAY <<< "$VALID_TICKETS"
           for ISSUE_KEY in "${VALID_TICKET_ARRAY[@]}"; do
             ISSUE_KEY=$(echo "$ISSUE_KEY" | tr -d ' ')
-            
-            # Create commit message with linked tickets for this comment
-            COMMIT_WITH_LINKS="${{ env.COMMIT_MSG }}"
-            
-            # Replace all ticket IDs in the commit message with JIRA links
-            IFS=',' read -ra ALL_TICKETS <<< "${{ env.ISSUE_KEYS }}"
-            for TICKET_ID in "${ALL_TICKETS[@]}"; do
-              TICKET_ID=$(echo "$TICKET_ID" | tr -d ' ')
-              [ -z "$TICKET_ID" ] && continue
-              COMMIT_WITH_LINKS="${COMMIT_WITH_LINKS//$TICKET_ID/[$TICKET_ID]($JIRA_BASE_CLEAN/browse/$TICKET_ID)}"
-            done
-            
-            # Escape the linked commit message for JSON
-            ESCAPED_COMMIT=$(printf '%s' "$COMMIT_WITH_LINKS" | sed 's/"/\\"/g' | tr '\n' ' ')
+            [ -z "$ISSUE_KEY" ] && continue
             
             echo "🔄 Posting comment to $ISSUE_KEY..."
-            echo "Debug: Comment will contain: $ESCAPED_COMMIT"
             
-            # Create JSON payload with clickable JIRA links in the commit message
-            if timeout 15 curl -sf -X POST \
+            # Create JSON payload with pre-escaped commit message
+            timeout 10 curl -sf -X POST \
               -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
               -H "Content-Type: application/json" \
               -H "Accept: application/json" \
@@ -155,12 +151,9 @@ jobs:
                   }]
                 }
               }" \
-              "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY/comment" >/dev/null 2>&1; then
-              
-              echo "✅ Successfully commented on $ISSUE_KEY"
-            else
-              echo "⚠️ Failed to comment on $ISSUE_KEY (non-fatal)"
-            fi
+              "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY/comment" && \
+            echo "✅ Successfully commented on $ISSUE_KEY" || \
+            echo "⚠️ Failed to comment on $ISSUE_KEY (non-fatal)"
           done
           
           echo "✅ JIRA comment step completed"
