@@ -1,84 +1,64 @@
-name: Comment on Jira Issue from Commit
-
-on:
-  push:
-    branches:
-      - dev
-
-jobs:
-  comment:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Get commit message
-        id: get_commit
-        run: |
-          COMMIT_MSG=$(git log -1 --pretty=%B)
-          echo "COMMIT_MSG=$COMMIT_MSG" >> $GITHUB_ENV
-          
-          # Extract all JIRA ticket references (case-insensitive)
-          ISSUE_KEYS=$(echo "$COMMIT_MSG" | grep -oiE 'gj-?[0-9]+' | tr '[:lower:]' '[:upper:]' | sort -u | tr '\n' ',' | sed 's/,$//' || true)
-          echo "ISSUE_KEYS=$ISSUE_KEYS" >> $GITHUB_ENV
-          
-          if [ -n "$ISSUE_KEYS" ]; then
-            echo "Found JIRA tickets: $ISSUE_KEYS"
-          fi
-
-      - name: Comment on Jira
-        if: env.ISSUE_KEYS != ''
-        run: |
-          # Get secrets
-          JIRA_EMAIL_SECRET="${{ secrets.JIRA_EMAIL }}"
-          JIRA_TOKEN_SECRET="${{ secrets.JIRA_API_TOKEN }}"
-          JIRA_BASE_SECRET="${{ secrets.JIRA_BASE_URL }}"
-          
-          if [ -z "$JIRA_EMAIL_SECRET" ] || [ -z "$JIRA_TOKEN_SECRET" ] || [ -z "$JIRA_BASE_SECRET" ]; then
-            echo "❌ Missing JIRA secrets. Check organization secrets: JIRA_EMAIL, JIRA_API_TOKEN, JIRA_BASE_URL"
-            exit 1
-          fi
-          
-          JIRA_BASE_CLEAN=$(echo "$JIRA_BASE_SECRET" | sed 's/\/$//')
-          
-          IFS=',' read -ra TICKET_ARRAY <<< "${{ env.ISSUE_KEYS }}"
-          VALID_TICKETS=""
-          
-          for ISSUE_KEY in "${TICKET_ARRAY[@]}"; do
-            ISSUE_KEY=$(echo "$ISSUE_KEY" | tr -d ' ')
-            [ -z "$ISSUE_KEY" ] && continue
-            
-            if curl --fail --silent --max-time 10 -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
-               "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY" >/dev/null 2>&1; then
-              echo "✅ $ISSUE_KEY accessible"
-              VALID_TICKETS="${VALID_TICKETS:+$VALID_TICKETS,}$ISSUE_KEY"
-            else
-              echo "⚠️ $ISSUE_KEY not accessible"
-            fi
-          done
-          
-          [ -z "$VALID_TICKETS" ] && { echo "❌ No valid tickets found"; exit 1; }
-          
-          ESCAPED_COMMIT=$(echo "${{ env.COMMIT_MSG }}" | sed 's/"/\\"/g')
-          
-          IFS=',' read -ra VALID_TICKET_ARRAY <<< "$VALID_TICKETS"
-          for ISSUE_KEY in "${VALID_TICKET_ARRAY[@]}"; do
-            ISSUE_KEY=$(echo "$ISSUE_KEY" | tr -d ' ')
-            
-            echo "🔄 Posting comment to $ISSUE_KEY..."
-            
-            curl --fail --silent --show-error --max-time 15 -X POST \
-              -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
-              -H "Content-Type: application/json" \
-              -H "Accept: application/json" \
-              --data "{
-                \"body\": \"🚀 Commit ${GITHUB_SHA} by ${GITHUB_ACTOR}\n\n🔗 Repository: https://github.com/${GITHUB_REPOSITORY}\n\n💬 $ESCAPED_COMMIT\"
-              }" \
-              "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY/comment"
-            
-            if [ $? -eq 0 ]; then
-              echo "✅ Successfully commented on $ISSUE_KEY"
-            else
-              echo "⚠️ Failed to comment on $ISSUE_KEY"
-            fi
-          done
+- name: Comment on Jira
+  if: env.ISSUE_KEYS != ''
+  run: |
+    JIRA_EMAIL_SECRET="${{ secrets.JIRA_EMAIL }}"
+    JIRA_TOKEN_SECRET="${{ secrets.JIRA_API_TOKEN }}"
+    JIRA_BASE_SECRET="${{ secrets.JIRA_BASE_URL }}"
+    
+    if [ -z "$JIRA_EMAIL_SECRET" ] || [ -z "$JIRA_TOKEN_SECRET" ] || [ -z "$JIRA_BASE_SECRET" ]; then
+      echo "❌ Missing JIRA secrets"
+      exit 1
+    fi
+    
+    JIRA_BASE_CLEAN=$(echo "$JIRA_BASE_SECRET" | sed 's/\/$//')
+    
+    IFS=',' read -ra TICKET_ARRAY <<< "${{ env.ISSUE_KEYS }}"
+    VALID_TICKETS=""
+    
+    for ISSUE_KEY in "${TICKET_ARRAY[@]}"; do
+      ISSUE_KEY=$(echo "$ISSUE_KEY" | tr -d ' ')
+      [ -z "$ISSUE_KEY" ] && continue
+      
+      if curl --fail --silent --max-time 10 -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
+         "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY" >/dev/null 2>&1; then
+        echo "✅ $ISSUE_KEY accessible"
+        VALID_TICKETS="${VALID_TICKETS:+$VALID_TICKETS,}$ISSUE_KEY"
+      else
+        echo "⚠️ $ISSUE_KEY not accessible"
+      fi
+    done
+    
+    [ -z "$VALID_TICKETS" ] && { echo "❌ No valid tickets found"; exit 1; }
+    
+    ESCAPED_COMMIT=$(echo "${{ env.COMMIT_MSG }}" | sed 's/"/\\"/g' | tr '\n' ' ')
+    
+    IFS=',' read -ra VALID_TICKET_ARRAY <<< "$VALID_TICKETS"
+    for ISSUE_KEY in "${VALID_TICKET_ARRAY[@]}"; do
+      ISSUE_KEY=$(echo "$ISSUE_KEY" | tr -d ' ')
+      
+      echo "🔄 Posting comment to $ISSUE_KEY..."
+      
+      curl --fail --silent --show-error --max-time 15 -X POST \
+        -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
+        -H "Content-Type: application/json" \
+        -H "Accept: application/json" \
+        --data "{
+          \"body\": {
+            \"type\": \"doc\",
+            \"version\": 1,
+            \"content\": [{
+              \"type\": \"paragraph\",
+              \"content\": [
+                {\"type\": \"text\", \"text\": \"🚀 Commit ${GITHUB_SHA} by ${GITHUB_ACTOR}\\n\\n🔗 Repository: https://github.com/${GITHUB_REPOSITORY}\\n\\n💬 $ESCAPED_COMMIT\"}
+              ]
+            }]
+          }
+        }" \
+        "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY/comment"
+      
+      if [ $? -eq 0 ]; then
+        echo "✅ Successfully commented on $ISSUE_KEY"
+      else
+        echo "⚠️ Failed to comment on $ISSUE_KEY"
+      fi
+    done
