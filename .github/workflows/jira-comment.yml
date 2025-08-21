@@ -46,7 +46,7 @@ jobs:
           # Process tickets and post comments
           IFS=',' read -ra TICKET_ARRAY <<< "${{ env.ISSUE_KEYS }}"
           VALID_TICKETS=""
-          TICKET_LINKS=""
+          TICKET_LINK_MAP=""
           
           for ISSUE_KEY in "${TICKET_ARRAY[@]}"; do
             ISSUE_KEY=$(echo "$ISSUE_KEY" | tr -d ' ')
@@ -58,15 +58,26 @@ jobs:
               
               echo "✅ $ISSUE_KEY accessible"
               
-              # Add to valid lists
+              # Add to valid tickets
               VALID_TICKETS="${VALID_TICKETS:+$VALID_TICKETS,}$ISSUE_KEY"
-              TICKET_LINKS="${TICKET_LINKS:+$TICKET_LINKS, }[$ISSUE_KEY]($JIRA_BASE_CLEAN/browse/$ISSUE_KEY)"
+              
+              # Build map for ticket replacement in commit message
+              TICKET_LINK_MAP="${TICKET_LINK_MAP}${ISSUE_KEY}|[$ISSUE_KEY]($JIRA_BASE_CLEAN/browse/$ISSUE_KEY) "
             else
               echo "⚠️ $ISSUE_KEY not accessible"
             fi
           done
           
           [ -z "$VALID_TICKETS" ] && { echo "❌ No valid tickets found"; exit 1; }
+          
+          # Create enhanced commit message with ticket links
+          ENHANCED_COMMIT_MSG="${{ env.COMMIT_MSG }}"
+          IFS=',' read -ra VALID_TICKET_ARRAY <<< "$VALID_TICKETS"
+          for ISSUE_KEY in "${VALID_TICKET_ARRAY[@]}"; do
+            ISSUE_KEY=$(echo "$ISSUE_KEY" | tr -d ' ')
+            # Replace all case-insensitive instances of the ticket ID with links
+            ENHANCED_COMMIT_MSG=$(echo "$ENHANCED_COMMIT_MSG" | sed -i "s/\b${ISSUE_KEY}\b/[$ISSUE_KEY]($JIRA_BASE_CLEAN\/browse\/$ISSUE_KEY)/gi" || echo "$ENHANCED_COMMIT_MSG" | sed "s/${ISSUE_KEY}/[$ISSUE_KEY]($JIRA_BASE_CLEAN\/browse\/$ISSUE_KEY)/g")
+          done
           
           # Post comments to valid tickets
           IFS=',' read -ra VALID_TICKET_ARRAY <<< "$VALID_TICKETS"
@@ -75,7 +86,7 @@ jobs:
             
             if timeout 15 curl -sf -X POST -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
                -H "Content-Type: application/json" \
-               --data "{\"body\": {\"type\": \"doc\", \"version\": 1, \"content\": [{\"type\": \"paragraph\", \"content\": [{\"type\": \"text\", \"text\": \"🚀 Commit \"}, {\"type\": \"text\", \"text\": \"${{ github.sha }}\", \"marks\": [{\"type\": \"code\"}]}, {\"type\": \"text\", \"text\": \" by ${{ github.actor }}\\n\\n📋 Related tickets: $TICKET_LINKS\\n\\n💬 ${{ env.COMMIT_MSG }}\"}]}]}}" \
+               --data "{\"body\": {\"type\": \"doc\", \"version\": 1, \"content\": [{\"type\": \"paragraph\", \"content\": [{\"type\": \"text\", \"text\": \"🚀 Commit \"}, {\"type\": \"text\", \"text\": \"${{ github.sha }}\", \"marks\": [{\"type\": \"code\"}]}, {\"type\": \"text\", \"text\": \" by ${{ github.actor }}\\n\\n� Repository: \"}, {\"type\": \"text\", \"text\": \"${{ github.repository }}\", \"marks\": [{\"type\": \"link\", \"attrs\": {\"href\": \"https://github.com/${{ github.repository }}\"}}]}, {\"type\": \"text\", \"text\": \"\\n\\n💬 $ENHANCED_COMMIT_MSG\"}]}]}}" \
                "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY/comment" >/dev/null 2>&1; then
               echo "✅ Commented on $ISSUE_KEY"
             else
