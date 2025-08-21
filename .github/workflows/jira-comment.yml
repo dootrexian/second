@@ -130,51 +130,30 @@ jobs:
             
             echo "🔄 Posting comment to $ISSUE_KEY..."
             
-            # Keep original commit message unchanged
-            ORIGINAL_COMMIT="${{ env.COMMIT_MSG }}"
-            echo "Debug: Original commit: $ORIGINAL_COMMIT"
-            
-            # Build ticket links section
-            TICKET_LINKS=""
-            IFS=',' read -ra ALL_TICKETS <<< "${{ env.ISSUE_KEYS }}"
-            for TICKET_ID in "${ALL_TICKETS[@]}"; do
-              TICKET_ID=$(echo "$TICKET_ID" | tr -d ' ')
-              [ -z "$TICKET_ID" ] && continue
-              
-              TICKET_URL="$JIRA_BASE_CLEAN/browse/$TICKET_ID"
-              echo "Debug: Adding ticket link: $TICKET_ID -> $TICKET_URL"
-              if [ -z "$TICKET_LINKS" ]; then
-                TICKET_LINKS="$TICKET_ID: $TICKET_URL"
-              else
-                TICKET_LINKS="$TICKET_LINKS\n$TICKET_ID: $TICKET_URL"
-              fi
-            done
-            
-            # Create final comment body
-            COMMENT_BODY="🚀 Commit ${{ github.sha }} by ${{ github.actor }}\n\n🔗 Repository: https://github.com/${{ github.repository }}\n\n💬 $ORIGINAL_COMMIT\n\n🎫 Related tickets:\n$TICKET_LINKS"
-            
-            echo "Debug: Final comment body: $COMMENT_BODY"
-            
-            # Escape for JSON
-            ESCAPED_BODY=$(printf '%s' "$COMMENT_BODY" | sed 's/"/\\"/g')
-            
-            # Post the comment
-            RESPONSE=$(timeout 10 curl -s -w "%{http_code}" -X POST \
+            # Create JSON payload with pre-escaped commit message
+            timeout 10 curl -sf -X POST \
               -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
               -H "Content-Type: application/json" \
               -H "Accept: application/json" \
-              --data "{\"body\": \"$ESCAPED_BODY\"}" \
-              "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY/comment")
-            
-            HTTP_CODE="${RESPONSE: -3}"
-            RESPONSE_BODY="${RESPONSE%???}"
-            
-            if [ "$HTTP_CODE" = "201" ]; then
-              echo "✅ Successfully commented on $ISSUE_KEY"
-            else
-              echo "⚠️ Failed to comment on $ISSUE_KEY - HTTP $HTTP_CODE"
-              echo "Response: $RESPONSE_BODY"
-            fi
+              --data "{
+                \"body\": {
+                  \"type\": \"doc\",
+                  \"version\": 1,
+                  \"content\": [{
+                    \"type\": \"paragraph\",
+                    \"content\": [
+                      {\"type\": \"text\", \"text\": \"🚀 Commit \"},
+                      {\"type\": \"text\", \"text\": \"${{ github.sha }}\", \"marks\": [{\"type\": \"code\"}]},
+                      {\"type\": \"text\", \"text\": \" by ${{ github.actor }}\\n\\n🔗 Repository: \"},
+                      {\"type\": \"text\", \"text\": \"${{ github.repository }}\", \"marks\": [{\"type\": \"link\", \"attrs\": {\"href\": \"https://github.com/${{ github.repository }}\"}}]},
+                      {\"type\": \"text\", \"text\": \"\\n\\n💬 $ESCAPED_COMMIT\"}
+                    ]
+                  }]
+                }
+              }" \
+              "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY/comment" && \
+            echo "✅ Successfully commented on $ISSUE_KEY" || \
+            echo "⚠️ Failed to comment on $ISSUE_KEY (non-fatal)"
           done
           
           echo "✅ JIRA comment step completed"
