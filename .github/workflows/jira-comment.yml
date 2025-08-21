@@ -130,31 +130,35 @@ jobs:
             
             echo "🔄 Posting comment to $ISSUE_KEY..."
             
-            # Create simple commit message with URLs
-            COMMIT_FOR_JIRA="${{ env.COMMIT_MSG }}"
-            echo "Debug: Original commit for $ISSUE_KEY: $COMMIT_FOR_JIRA"
+            # Keep original commit message unchanged
+            ORIGINAL_COMMIT="${{ env.COMMIT_MSG }}"
+            echo "Debug: Original commit: $ORIGINAL_COMMIT"
             
-            # Replace each ticket ID with its URL
+            # Build ticket links section
+            TICKET_LINKS=""
             IFS=',' read -ra ALL_TICKETS <<< "${{ env.ISSUE_KEYS }}"
             for TICKET_ID in "${ALL_TICKETS[@]}"; do
               TICKET_ID=$(echo "$TICKET_ID" | tr -d ' ')
               [ -z "$TICKET_ID" ] && continue
               
               TICKET_URL="$JIRA_BASE_CLEAN/browse/$TICKET_ID"
-              echo "Debug: Replacing $TICKET_ID with $TICKET_URL"
-              COMMIT_FOR_JIRA="${COMMIT_FOR_JIRA//$TICKET_ID/$TICKET_URL}"
+              echo "Debug: Adding ticket link: $TICKET_ID -> $TICKET_URL"
+              if [ -z "$TICKET_LINKS" ]; then
+                TICKET_LINKS="$TICKET_ID: $TICKET_URL"
+              else
+                TICKET_LINKS="$TICKET_LINKS\n$TICKET_ID: $TICKET_URL"
+              fi
             done
             
-            echo "Debug: Final commit for $ISSUE_KEY: $COMMIT_FOR_JIRA"
+            # Create final comment body
+            COMMENT_BODY="🚀 Commit ${{ github.sha }} by ${{ github.actor }}\n\n🔗 Repository: https://github.com/${{ github.repository }}\n\n💬 $ORIGINAL_COMMIT\n\n🎫 Related tickets:\n$TICKET_LINKS"
             
-            # Create the comment body as a single line
-            COMMENT_BODY="🚀 Commit ${{ github.sha }} by ${{ github.actor }}\n\n🔗 Repository: https://github.com/${{ github.repository }}\n\n💬 $COMMIT_FOR_JIRA"
+            echo "Debug: Final comment body: $COMMENT_BODY"
             
-            # Escape quotes for JSON
+            # Escape for JSON
             ESCAPED_BODY=$(printf '%s' "$COMMENT_BODY" | sed 's/"/\\"/g')
-            echo "Debug: Escaped body: $ESCAPED_BODY"
             
-            # Post the comment using simple text format
+            # Post the comment
             RESPONSE=$(timeout 10 curl -s -w "%{http_code}" -X POST \
               -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
               -H "Content-Type: application/json" \
