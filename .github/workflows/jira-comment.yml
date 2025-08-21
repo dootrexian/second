@@ -130,32 +130,47 @@ jobs:
             
             echo "🔄 Posting comment to $ISSUE_KEY..."
             
-            # Create a simple text comment with URLs that JIRA will auto-link
-            SIMPLE_COMMIT="${{ env.COMMIT_MSG }}"
+            # Create simple commit message with URLs
+            COMMIT_FOR_JIRA="${{ env.COMMIT_MSG }}"
+            echo "Debug: Original commit for $ISSUE_KEY: $COMMIT_FOR_JIRA"
             
-            # Replace ticket IDs with plain URLs
+            # Replace each ticket ID with its URL
             IFS=',' read -ra ALL_TICKETS <<< "${{ env.ISSUE_KEYS }}"
             for TICKET_ID in "${ALL_TICKETS[@]}"; do
               TICKET_ID=$(echo "$TICKET_ID" | tr -d ' ')
               [ -z "$TICKET_ID" ] && continue
+              
               TICKET_URL="$JIRA_BASE_CLEAN/browse/$TICKET_ID"
-              SIMPLE_COMMIT="${SIMPLE_COMMIT//$TICKET_ID/$TICKET_URL}"
+              echo "Debug: Replacing $TICKET_ID with $TICKET_URL"
+              COMMIT_FOR_JIRA="${COMMIT_FOR_JIRA//$TICKET_ID/$TICKET_URL}"
             done
             
-            # Escape for JSON
-            ESCAPED_SIMPLE=$(printf '%s' "$SIMPLE_COMMIT" | sed 's/"/\\"/g' | tr '\n' ' ')
+            echo "Debug: Final commit for $ISSUE_KEY: $COMMIT_FOR_JIRA"
             
-            # Use simple text format that JIRA will auto-link
-            timeout 10 curl -sf -X POST \
+            # Create the comment body as a single line
+            COMMENT_BODY="🚀 Commit ${{ github.sha }} by ${{ github.actor }}\n\n🔗 Repository: https://github.com/${{ github.repository }}\n\n💬 $COMMIT_FOR_JIRA"
+            
+            # Escape quotes for JSON
+            ESCAPED_BODY=$(printf '%s' "$COMMENT_BODY" | sed 's/"/\\"/g')
+            echo "Debug: Escaped body: $ESCAPED_BODY"
+            
+            # Post the comment using simple text format
+            RESPONSE=$(timeout 10 curl -s -w "%{http_code}" -X POST \
               -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
               -H "Content-Type: application/json" \
               -H "Accept: application/json" \
-              --data "{
-                \"body\": \"🚀 Commit ${{ github.sha }} by ${{ github.actor }}\n\n🔗 Repository: https://github.com/${{ github.repository }}\n\n💬 $ESCAPED_SIMPLE\"
-              }" \
-              "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY/comment" && \
-            echo "✅ Successfully commented on $ISSUE_KEY" || \
-            echo "⚠️ Failed to comment on $ISSUE_KEY (non-fatal)"
+              --data "{\"body\": \"$ESCAPED_BODY\"}" \
+              "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY/comment")
+            
+            HTTP_CODE="${RESPONSE: -3}"
+            RESPONSE_BODY="${RESPONSE%???}"
+            
+            if [ "$HTTP_CODE" = "201" ]; then
+              echo "✅ Successfully commented on $ISSUE_KEY"
+            else
+              echo "⚠️ Failed to comment on $ISSUE_KEY - HTTP $HTTP_CODE"
+              echo "Response: $RESPONSE_BODY"
+            fi
           done
           
           echo "✅ JIRA comment step completed"
