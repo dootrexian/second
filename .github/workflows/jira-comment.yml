@@ -48,7 +48,7 @@ jobs:
             ISSUE_KEY=$(echo "$ISSUE_KEY" | tr -d ' ')
             [ -z "$ISSUE_KEY" ] && continue
             
-            if timeout 10 curl -sf -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
+            if curl --fail --silent --max-time 10 -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
                "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY" >/dev/null 2>&1; then
               echo "✅ $ISSUE_KEY accessible"
               VALID_TICKETS="${VALID_TICKETS:+$VALID_TICKETS,}$ISSUE_KEY"
@@ -67,14 +67,14 @@ jobs:
             
             echo "🔄 Posting comment to $ISSUE_KEY..."
             
-            timeout 15 curl -sf -X POST \
+            curl --fail --silent --show-error --max-time 15 -X POST \
               -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
               -H "Content-Type: application/json" \
               -H "Accept: application/json" \
               --data "{
                 \"body\": \"🚀 Commit ${GITHUB_SHA} by ${GITHUB_ACTOR}\n\n🔗 Repository: https://github.com/${GITHUB_REPOSITORY}\n\n💬 $ESCAPED_COMMIT\"
               }" \
-              "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY/comment" >/dev/null 2>&1
+              "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY/comment"
             
             if [ $? -eq 0 ]; then
               echo "✅ Successfully commented on $ISSUE_KEY"
