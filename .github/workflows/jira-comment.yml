@@ -52,9 +52,9 @@ jobs:
             ISSUE_KEY=$(echo "$ISSUE_KEY" | tr -d ' ')
             [ -z "$ISSUE_KEY" ] && continue
             
-            # Quick ticket validation
-            if curl -sf -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
-               "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY" > /dev/null; then
+            # Quick ticket validation with timeout
+            if timeout 10 curl -sf -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
+               "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY" >/dev/null 2>&1; then
               
               echo "✅ $ISSUE_KEY accessible"
               
@@ -73,10 +73,10 @@ jobs:
           for ISSUE_KEY in "${VALID_TICKET_ARRAY[@]}"; do
             ISSUE_KEY=$(echo "$ISSUE_KEY" | tr -d ' ')
             
-            if curl -sf -X POST -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
+            if timeout 15 curl -sf -X POST -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
                -H "Content-Type: application/json" \
                --data "{\"body\": {\"type\": \"doc\", \"version\": 1, \"content\": [{\"type\": \"paragraph\", \"content\": [{\"type\": \"text\", \"text\": \"🚀 Commit \"}, {\"type\": \"text\", \"text\": \"${{ github.sha }}\", \"marks\": [{\"type\": \"code\"}]}, {\"type\": \"text\", \"text\": \" by ${{ github.actor }}\\n\\n📋 Related tickets: $TICKET_LINKS\\n\\n💬 ${{ env.COMMIT_MSG }}\"}]}]}}" \
-               "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY/comment" > /dev/null; then
+               "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY/comment" >/dev/null 2>&1; then
               echo "✅ Commented on $ISSUE_KEY"
             else
               echo "⚠️ Failed to comment on $ISSUE_KEY"
