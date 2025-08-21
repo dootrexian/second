@@ -36,28 +36,35 @@ jobs:
           echo "Debug: Commit SHA: ${{ github.sha }}"
           echo "Debug: Actor: ${{ github.actor }}"
           echo "Debug: Repository: ${{ github.repository }}"
-          echo "Debug: JIRA Base URL: ${{ secrets.JIRA_BASE_URL }}"
+          echo "Debug: Repository Owner: ${{ github.repository_owner }}"
+          echo "Debug: JIRA Base URL: '${{ secrets.JIRA_BASE_URL }}'"
+          echo "Debug: JIRA Email length: ${#JIRA_EMAIL_SECRET}"
+          echo "Debug: JIRA Token length: ${#JIRA_TOKEN_SECRET}"
+          
+          JIRA_EMAIL_SECRET="${{ secrets.JIRA_EMAIL }}"
+          JIRA_TOKEN_SECRET="${{ secrets.JIRA_API_TOKEN }}"
+          JIRA_BASE_SECRET="${{ secrets.JIRA_BASE_URL }}"
           
           # Check if secrets are accessible
-          if [ -z "${{ secrets.JIRA_EMAIL }}" ]; then
+          if [ -z "$JIRA_EMAIL_SECRET" ]; then
             echo "❌ Error: JIRA_EMAIL secret is not accessible"
-            echo "💡 Tip: Check organization secret settings - ensure this repository has access"
+            echo "💡 Tip: Try adding repository-level secrets as a workaround"
             exit 1
           fi
           
-          if [ -z "${{ secrets.JIRA_API_TOKEN }}" ]; then
+          if [ -z "$JIRA_TOKEN_SECRET" ]; then
             echo "❌ Error: JIRA_API_TOKEN secret is not accessible"
-            echo "💡 Tip: Check organization secret settings - ensure this repository has access"
+            echo "💡 Tip: Try adding repository-level secrets as a workaround"
             exit 1
           fi
           
-          if [ -z "${{ secrets.JIRA_BASE_URL }}" ]; then
+          if [ -z "$JIRA_BASE_SECRET" ]; then
             echo "❌ Error: JIRA_BASE_URL secret is not accessible"
-            echo "💡 Tip: Check organization secret settings - ensure this repository has access"
+            echo "💡 Tip: Try adding repository-level secrets as a workaround"
             exit 1
           fi
           
-          echo "✅ All organization secrets are accessible"
+          echo "✅ All secrets are accessible"
           # Test JIRA connectivity first
           echo "Testing JIRA connectivity..."
           TEST_RESPONSE=$(curl -s -w "%{http_code}" -X GET \
