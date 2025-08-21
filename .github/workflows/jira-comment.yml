@@ -108,19 +108,15 @@ jobs:
           # First test authentication with a simple endpoint
           echo "Testing JIRA authentication..."
           echo "Debug: Base URL: '$JIRA_BASE_CLEAN'"
-          echo "Debug: Constructing auth URL..."
           
-          # Construct URL more explicitly
-          BASE_URL="https://dootrexian.atlassian.net"
-          AUTH_URL="$BASE_URL/rest/api/3/myself"
+          # Use the cleaned base URL for authentication test
+          AUTH_URL="$JIRA_BASE_CLEAN/rest/api/3/myself"
           echo "Debug: Auth URL: $AUTH_URL"
           
           set +e
-          AUTH_RESPONSE=$(timeout 30 curl -k -s -w "%{http_code}" -X GET \
-            -H "Authorization: Basic $(echo -n $JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET | base64)" \
-            -H "Content-Type: application/json" \
+          AUTH_RESPONSE=$(timeout 30 curl -s -w "%{http_code}" \
+            -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
             -H "Accept: application/json" \
-            -H "User-Agent: GitHub-Actions/1.0" \
             "$AUTH_URL" 2>&1)
           
           AUTH_EXIT_CODE=$?
@@ -146,6 +142,35 @@ jobs:
               echo "Auth response: $AUTH_BODY"
               exit 1
             fi
+          elif [ $AUTH_EXIT_CODE -eq 92 ]; then
+            echo "⚠️ HTTP/2 protocol error detected. Trying HTTP/1.1 fallback..."
+            
+            # Try with HTTP/1.1 as fallback
+            AUTH_RESPONSE_FALLBACK=$(timeout 30 curl -s -w "%{http_code}" --http1.1 \
+              -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
+              -H "Accept: application/json" \
+              "$AUTH_URL" 2>&1)
+            
+            FALLBACK_EXIT_CODE=$?
+            echo "Debug: Fallback exit code: $FALLBACK_EXIT_CODE"
+            
+            if [ $FALLBACK_EXIT_CODE -eq 0 ]; then
+              FALLBACK_HTTP_CODE=$(echo "$AUTH_RESPONSE_FALLBACK" | tail -c 4)
+              echo "Debug: Fallback HTTP Status: $FALLBACK_HTTP_CODE"
+              
+              if [ "$FALLBACK_HTTP_CODE" = "200" ]; then
+                echo "✅ JIRA authentication successful with HTTP/1.1 fallback!"
+              else
+                echo "❌ Fallback also failed with HTTP $FALLBACK_HTTP_CODE"
+                FALLBACK_BODY=$(echo "$AUTH_RESPONSE_FALLBACK" | head -c -4)
+                echo "Fallback response: $FALLBACK_BODY"
+                exit 1
+              fi
+            else
+              echo "❌ Both HTTP/2 and HTTP/1.1 attempts failed"
+              echo "Fallback response: $AUTH_RESPONSE_FALLBACK"
+              exit 1
+            fi
           else
             echo "❌ Auth test failed with exit code $AUTH_EXIT_CODE"
             echo "Auth response: $AUTH_RESPONSE"
@@ -156,16 +181,14 @@ jobs:
           fi
           
           # Now test the specific issue endpoint
-          API_URL="$BASE_URL/rest/api/3/issue/${{ env.ISSUE_KEY }}"
+          API_URL="$JIRA_BASE_CLEAN/rest/api/3/issue/${{ env.ISSUE_KEY }}"
           echo "Debug: Issue endpoint: $API_URL"
           
           # Add timeout and better error handling
           set +e  # Don't exit on curl failure
-          TEST_RESPONSE=$(timeout 30 curl -k -s -w "%{http_code}" -X GET \
-            -H "Authorization: Basic $(echo -n $JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET | base64)" \
-            -H "Content-Type: application/json" \
+          TEST_RESPONSE=$(timeout 30 curl -s -w "%{http_code}" \
+            -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
             -H "Accept: application/json" \
-            -H "User-Agent: GitHub-Actions/1.0" \
             "$API_URL" 2>&1)
           
           CURL_EXIT_CODE=$?
@@ -215,13 +238,12 @@ jobs:
           echo "Posting comment to JIRA..."
           
           set +e  # Don't exit on curl failure
-          RESPONSE=$(timeout 30 curl -k -s -w "%{http_code}" -X POST \
-            -H "Authorization: Basic $(echo -n $JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET | base64)" \
+          RESPONSE=$(timeout 30 curl -s -w "%{http_code}" -X POST \
+            -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
             -H "Content-Type: application/json" \
             -H "Accept: application/json" \
-            -H "User-Agent: GitHub-Actions/1.0" \
-            --data "{\"body\": \"Commit ${{ github.sha }} by ${{ github.actor }}: ${{ env.COMMIT_MSG }}\"}" \
-            "$BASE_URL/rest/api/3/issue/${{ env.ISSUE_KEY }}/comment" 2>&1)
+            --data "{\"body\": {\"type\": \"doc\", \"version\": 1, \"content\": [{\"type\": \"paragraph\", \"content\": [{\"type\": \"text\", \"text\": \"Commit ${{ github.sha }} by ${{ github.actor }}: ${{ env.COMMIT_MSG }}\"}]}]}}" \
+            "$JIRA_BASE_CLEAN/rest/api/3/issue/${{ env.ISSUE_KEY }}/comment" 2>&1)
           
           CURL_EXIT_CODE=$?
           set -e  # Re-enable exit on error
