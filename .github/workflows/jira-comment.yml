@@ -187,9 +187,9 @@ jobs:
                 body: comment
               });
               
-              console.log('✅ Successfully created PR comment with JIRA links');
+              console.log('Successfully created PR comment with JIRA links');
             } catch (error) {
-              console.log('⚠️ Failed to create PR comment:', error.message);
+              console.log('Failed to create PR comment:', error.message);
             }
 
       - name: Output linked commit message
@@ -199,5 +199,6 @@ jobs:
           echo "## Summary" >> $GITHUB_STEP_SUMMARY
           echo "**Original commit message:** ${{ env.COMMIT_MSG }}" >> $GITHUB_STEP_SUMMARY
           echo "**With JIRA links:** ${{ env.LINKED_COMMIT_MSG }}" >> $GITHUB_STEP_SUMMARY
+
 
 
