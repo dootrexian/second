@@ -68,9 +68,43 @@ jobs:
           
           echo "✅ All secrets are accessible and have values"
           
-          # Test JIRA connectivity first
-          echo "Testing JIRA connectivity..."
-          echo "Debug: Attempting to connect to: $JIRA_BASE_SECRET/rest/api/3/issue/${{ env.ISSUE_KEY }}"
+          # Validate JIRA_BASE_URL format
+          echo "Debug: Validating JIRA Base URL format..."
+          if [[ ! "$JIRA_BASE_SECRET" =~ ^https?:// ]]; then
+            echo "❌ Error: JIRA_BASE_URL must start with http:// or https://"
+            echo "Current value starts with: $(echo "$JIRA_BASE_SECRET" | head -c 10)..."
+            echo "💡 Expected format: https://yourcompany.atlassian.net"
+            exit 1
+          fi
+          
+          # Remove trailing slash if present
+          JIRA_BASE_CLEAN=$(echo "$JIRA_BASE_SECRET" | sed 's/\/$//')
+          echo "Debug: Cleaned JIRA Base URL: $JIRA_BASE_CLEAN"
+          
+          # Test basic connectivity first
+          echo "Testing basic JIRA connectivity..."
+          echo "Debug: Attempting basic connection to: $JIRA_BASE_CLEAN"
+          
+          set +e  # Don't exit on curl failure
+          BASIC_TEST=$(timeout 15 curl -s -w "%{http_code}" -I "$JIRA_BASE_CLEAN" 2>&1)
+          BASIC_EXIT_CODE=$?
+          set -e
+          
+          echo "Debug: Basic connectivity exit code: $BASIC_EXIT_CODE"
+          echo "Debug: Basic connectivity response: $BASIC_TEST"
+          
+          if [ $BASIC_EXIT_CODE -ne 0 ]; then
+            echo "❌ Error: Cannot reach JIRA instance at $JIRA_BASE_CLEAN"
+            echo "💡 Common issues:"
+            echo "   - Wrong URL (check your JIRA instance URL)"
+            echo "   - Network connectivity"
+            echo "   - JIRA instance is down"
+            exit 1
+          fi
+          
+          # Test JIRA API connectivity
+          echo "Testing JIRA API connectivity..."
+          echo "Debug: Attempting to connect to: $JIRA_BASE_CLEAN/rest/api/3/issue/${{ env.ISSUE_KEY }}"
           
           # Add timeout and better error handling
           set +e  # Don't exit on curl failure
@@ -78,7 +112,7 @@ jobs:
             -H "Authorization: Basic $(echo -n $JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET | base64)" \
             -H "Content-Type: application/json" \
             -H "Accept: application/json" \
-            "$JIRA_BASE_SECRET/rest/api/3/issue/${{ env.ISSUE_KEY }}" 2>&1)
+            "$JIRA_BASE_CLEAN/rest/api/3/issue/${{ env.ISSUE_KEY }}" 2>&1)
           
           CURL_EXIT_CODE=$?
           set -e  # Re-enable exit on error
@@ -132,7 +166,7 @@ jobs:
             -H "Content-Type: application/json" \
             -H "Accept: application/json" \
             --data "{\"body\": \"Commit ${{ github.sha }} by ${{ github.actor }}: ${{ env.COMMIT_MSG }}\"}" \
-            "$JIRA_BASE_SECRET/rest/api/3/issue/${{ env.ISSUE_KEY }}/comment" 2>&1)
+            "$JIRA_BASE_CLEAN/rest/api/3/issue/${{ env.ISSUE_KEY }}/comment" 2>&1)
           
           CURL_EXIT_CODE=$?
           set -e  # Re-enable exit on error
