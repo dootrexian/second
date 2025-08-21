@@ -32,8 +32,9 @@ jobs:
         if: env.ISSUE_KEYS != ''
         id: generate_links
         run: |
-          # Get JIRA base URL for link generation
-          JIRA_BASE_CLEAN=$(echo "${{ secrets.JIRA_BASE_URL }}" | sed 's/\/$//')
+          # Get JIRA base URL for link generation (remove trailing slash)
+          JIRA_BASE_CLEAN="${{ secrets.JIRA_BASE_URL }}"
+          JIRA_BASE_CLEAN="${JIRA_BASE_CLEAN%/}"
           
           # Create commit message with clickable JIRA links
           LINKED_COMMIT_MSG="${{ env.COMMIT_MSG }}"
@@ -43,9 +44,9 @@ jobs:
             ISSUE_KEY=$(echo "$ISSUE_KEY" | tr -d ' ')
             [ -z "$ISSUE_KEY" ] && continue
             
-            # Replace ticket ID with markdown link
+            # Replace ticket ID with markdown link using parameter expansion
             JIRA_LINK="[$ISSUE_KEY]($JIRA_BASE_CLEAN/browse/$ISSUE_KEY)"
-            LINKED_COMMIT_MSG=$(echo "$LINKED_COMMIT_MSG" | sed "s/$ISSUE_KEY/$JIRA_LINK/g")
+            LINKED_COMMIT_MSG="${LINKED_COMMIT_MSG//$ISSUE_KEY/$JIRA_LINK}"
           done
           
           echo "LINKED_COMMIT_MSG=$LINKED_COMMIT_MSG" >> $GITHUB_ENV
