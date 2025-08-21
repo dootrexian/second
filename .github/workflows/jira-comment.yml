@@ -30,31 +30,35 @@ jobs:
           fi
 
       - name: Comment on Jira
+      - name: Comment on Jira
         if: env.ISSUE_KEY != ''
         run: |
           echo "Debug: Commenting on JIRA ticket: ${{ env.ISSUE_KEY }}"
           echo "Debug: Commit SHA: ${{ github.sha }}"
           echo "Debug: Actor: ${{ github.actor }}"
+          echo "Debug: Repository: ${{ github.repository }}"
           echo "Debug: JIRA Base URL: ${{ secrets.JIRA_BASE_URL }}"
           
-          # Check if secrets are set
+          # Check if secrets are accessible
           if [ -z "${{ secrets.JIRA_EMAIL }}" ]; then
-            echo "❌ Error: JIRA_EMAIL secret is not set"
+            echo "❌ Error: JIRA_EMAIL secret is not accessible"
+            echo "💡 Tip: Check organization secret settings - ensure this repository has access"
             exit 1
           fi
           
           if [ -z "${{ secrets.JIRA_API_TOKEN }}" ]; then
-            echo "❌ Error: JIRA_API_TOKEN secret is not set"
+            echo "❌ Error: JIRA_API_TOKEN secret is not accessible"
+            echo "💡 Tip: Check organization secret settings - ensure this repository has access"
             exit 1
           fi
           
           if [ -z "${{ secrets.JIRA_BASE_URL }}" ]; then
-            echo "❌ Error: JIRA_BASE_URL secret is not set"
+            echo "❌ Error: JIRA_BASE_URL secret is not accessible"
+            echo "💡 Tip: Check organization secret settings - ensure this repository has access"
             exit 1
           fi
           
-          echo "✅ All secrets are configured"
-          
+          echo "✅ All organization secrets are accessible"
           # Test JIRA connectivity first
           echo "Testing JIRA connectivity..."
           TEST_RESPONSE=$(curl -s -w "%{http_code}" -X GET \
