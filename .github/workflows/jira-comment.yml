@@ -34,16 +34,13 @@ jobs:
           JIRA_TOKEN_SECRET="${{ secrets.JIRA_API_TOKEN }}"
           JIRA_BASE_SECRET="${{ secrets.JIRA_BASE_URL }}"
           
-          # Quick secret validation
           if [ -z "$JIRA_EMAIL_SECRET" ] || [ -z "$JIRA_TOKEN_SECRET" ] || [ -z "$JIRA_BASE_SECRET" ]; then
             echo "❌ Missing JIRA secrets. Check organization secrets: JIRA_EMAIL, JIRA_API_TOKEN, JIRA_BASE_URL"
             exit 1
           fi
           
-          # Clean base URL
           JIRA_BASE_CLEAN=$(echo "$JIRA_BASE_SECRET" | sed 's/\/$//')
           
-          # Process tickets and post comments
           IFS=',' read -ra TICKET_ARRAY <<< "${{ env.ISSUE_KEYS }}"
           VALID_TICKETS=""
           
@@ -51,10 +48,8 @@ jobs:
             ISSUE_KEY=$(echo "$ISSUE_KEY" | tr -d ' ')
             [ -z "$ISSUE_KEY" ] && continue
             
-            # Quick ticket validation with timeout
             if timeout 10 curl -sf -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
                "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY" >/dev/null 2>&1; then
-              
               echo "✅ $ISSUE_KEY accessible"
               VALID_TICKETS="${VALID_TICKETS:+$VALID_TICKETS,}$ISSUE_KEY"
             else
@@ -64,36 +59,20 @@ jobs:
           
           [ -z "$VALID_TICKETS" ] && { echo "❌ No valid tickets found"; exit 1; }
           
-          # Post comments to valid tickets with clickable links
+          ESCAPED_COMMIT=$(echo "${{ env.COMMIT_MSG }}" | sed 's/"/\\"/g')
+          
           IFS=',' read -ra VALID_TICKET_ARRAY <<< "$VALID_TICKETS"
           for ISSUE_KEY in "${VALID_TICKET_ARRAY[@]}"; do
             ISSUE_KEY=$(echo "$ISSUE_KEY" | tr -d ' ')
             
-            # Escape commit message for JSON
-            ESCAPED_COMMIT=$(echo "${{ env.COMMIT_MSG }}" | sed 's/"/\\"/g' | tr '\n' ' ')
-            
             echo "🔄 Posting comment to $ISSUE_KEY..."
             
-            # Create simple JSON payload with clickable repository link
             timeout 15 curl -sf -X POST \
               -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
               -H "Content-Type: application/json" \
               -H "Accept: application/json" \
               --data "{
-                \"body\": {
-                  \"type\": \"doc\",
-                  \"version\": 1,
-                  \"content\": [{
-                    \"type\": \"paragraph\",
-                    \"content\": [
-                      {\"type\": \"text\", \"text\": \"🚀 Commit \"},
-                      {\"type\": \"text\", \"text\": \"${{ github.sha }}\", \"marks\": [{\"type\": \"code\"}]},
-                      {\"type\": \"text\", \"text\": \" by ${{ github.actor }}\\n\\n🔗 Repository: \"},
-                      {\"type\": \"text\", \"text\": \"${{ github.repository }}\", \"marks\": [{\"type\": \"link\", \"attrs\": {\"href\": \"https://github.com/${{ github.repository }}\"}}]},
-                      {\"type\": \"text\", \"text\": \"\\n\\n💬 $ESCAPED_COMMIT\"}
-                    ]
-                  }]
-                }
+                \"body\": \"🚀 Commit ${GITHUB_SHA} by ${GITHUB_ACTOR}\n\n🔗 Repository: https://github.com/${GITHUB_REPOSITORY}\n\n💬 $ESCAPED_COMMIT\"
               }" \
               "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY/comment" >/dev/null 2>&1
             
