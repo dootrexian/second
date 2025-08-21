@@ -19,20 +19,23 @@ jobs:
           echo "COMMIT_MSG=$COMMIT_MSG" >> $GITHUB_ENV
           echo "Debug: Full commit message: $COMMIT_MSG"
           
-          ISSUE_KEY=$(echo "$COMMIT_MSG" | grep -oE 'GJ-?[0-9]+' | head -1 || true)
-          echo "ISSUE_KEY=$ISSUE_KEY" >> $GITHUB_ENV
-          echo "Debug: Extracted JIRA key: '$ISSUE_KEY'"
+          # Extract all JIRA ticket references (case-insensitive, handle comma and space separators)
+          ISSUE_KEYS=$(echo "$COMMIT_MSG" | grep -oiE 'gj-?[0-9]+' | tr '[:lower:]' '[:upper:]' | sort -u | tr '\n' ',' | sed 's/,$//' || true)
+          echo "ISSUE_KEYS=$ISSUE_KEYS" >> $GITHUB_ENV
+          echo "Debug: Extracted JIRA keys: '$ISSUE_KEYS'"
           
-          if [ -z "$ISSUE_KEY" ]; then
-            echo "Debug: No JIRA ticket found in commit message"
+          if [ -z "$ISSUE_KEYS" ]; then
+            echo "Debug: No JIRA tickets found in commit message"
           else
-            echo "Debug: Found JIRA ticket: $ISSUE_KEY"
+            # Count the number of tickets
+            TICKET_COUNT=$(echo "$ISSUE_KEYS" | tr ',' '\n' | wc -l)
+            echo "Debug: Found $TICKET_COUNT JIRA ticket(s): $ISSUE_KEYS"
           fi
 
       - name: Comment on Jira
-        if: env.ISSUE_KEY != ''
+        if: env.ISSUE_KEYS != ''
         run: |
-          echo "Debug: Commenting on JIRA ticket: ${{ env.ISSUE_KEY }}"
+          echo "Debug: Processing JIRA tickets: ${{ env.ISSUE_KEYS }}"
           echo "Debug: Commit SHA: ${{ github.sha }}"
           echo "Debug: Actor: ${{ github.actor }}"
           echo "Debug: Repository: ${{ github.repository }}"
@@ -180,93 +183,135 @@ jobs:
             exit 1
           fi
           
-          # Now test the specific issue endpoint
-          API_URL="$JIRA_BASE_CLEAN/rest/api/3/issue/${{ env.ISSUE_KEY }}"
-          echo "Debug: Issue endpoint: $API_URL"
+          # Convert comma-separated list to array and process each ticket
+          IFS=',' read -ra TICKET_ARRAY <<< "${{ env.ISSUE_KEYS }}"
+          VALID_TICKETS=""
+          TICKET_LINKS=""
           
-          # Add timeout and better error handling
-          set +e  # Don't exit on curl failure
-          TEST_RESPONSE=$(timeout 30 curl -s -w "%{http_code}" \
-            -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
-            -H "Accept: application/json" \
-            "$API_URL" 2>&1)
+          for ISSUE_KEY in "${TICKET_ARRAY[@]}"; do
+            # Trim whitespace
+            ISSUE_KEY=$(echo "$ISSUE_KEY" | tr -d ' ')
+            
+            if [ -z "$ISSUE_KEY" ]; then
+              continue
+            fi
+            
+            echo "🔍 Checking JIRA ticket: $ISSUE_KEY"
+            
+            # Test the specific issue endpoint
+            API_URL="$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY"
+            echo "Debug: Issue endpoint: $API_URL"
+            
+            # Add timeout and better error handling
+            set +e  # Don't exit on curl failure
+            TEST_RESPONSE=$(timeout 30 curl -s -w "%{http_code}" \
+              -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
+              -H "Accept: application/json" \
+              "$API_URL" 2>&1)
+            
+            CURL_EXIT_CODE=$?
+            set -e  # Re-enable exit on error
+            
+            echo "Debug: Curl exit code for $ISSUE_KEY: $CURL_EXIT_CODE"
+            
+            if [ $CURL_EXIT_CODE -eq 124 ]; then
+              echo "⚠️ Warning: Request timed out for $ISSUE_KEY (30 seconds)"
+              continue
+            elif [ $CURL_EXIT_CODE -ne 0 ]; then
+              echo "⚠️ Warning: Curl failed for $ISSUE_KEY with exit code $CURL_EXIT_CODE"
+              echo "Response: $TEST_RESPONSE"
+              continue
+            fi
+            
+            TEST_HTTP_CODE=$(echo "$TEST_RESPONSE" | tail -c 4)
+            TEST_BODY=$(echo "$TEST_RESPONSE" | head -c -4)
+            
+            echo "Debug: Test HTTP Status for $ISSUE_KEY: $TEST_HTTP_CODE"
+            
+            if [ "$TEST_HTTP_CODE" = "404" ]; then
+              echo "⚠️ Warning: JIRA ticket $ISSUE_KEY not found"
+              continue
+            elif [ "$TEST_HTTP_CODE" = "401" ]; then
+              echo "❌ Error: Authentication failed. Check JIRA_EMAIL and JIRA_API_TOKEN"
+              echo "Response: $TEST_BODY"
+              exit 1
+            elif [ "$TEST_HTTP_CODE" = "403" ]; then
+              echo "⚠️ Warning: Permission denied for $ISSUE_KEY. User may not have access to this ticket"
+              continue
+            elif [ "$TEST_HTTP_CODE" != "200" ]; then
+              echo "⚠️ Warning: Unexpected response for $ISSUE_KEY"
+              echo "HTTP Status: $TEST_HTTP_CODE"
+              continue
+            fi
+            
+            echo "✅ JIRA ticket $ISSUE_KEY exists and is accessible"
+            
+            # Add to valid tickets list
+            if [ -z "$VALID_TICKETS" ]; then
+              VALID_TICKETS="$ISSUE_KEY"
+            else
+              VALID_TICKETS="$VALID_TICKETS,$ISSUE_KEY"
+            fi
+            
+            # Create ticket link for the comment
+            TICKET_LINK="[$ISSUE_KEY]($JIRA_BASE_CLEAN/browse/$ISSUE_KEY)"
+            if [ -z "$TICKET_LINKS" ]; then
+              TICKET_LINKS="$TICKET_LINK"
+            else
+              TICKET_LINKS="$TICKET_LINKS, $TICKET_LINK"
+            fi
+          done
           
-          CURL_EXIT_CODE=$?
-          set -e  # Re-enable exit on error
-          
-          echo "Debug: Curl exit code: $CURL_EXIT_CODE"
-          
-          if [ $CURL_EXIT_CODE -eq 124 ]; then
-            echo "❌ Error: Request timed out (30 seconds)"
-            echo "💡 Check: JIRA_BASE_URL is correct and JIRA instance is accessible"
-            exit 1
-          elif [ $CURL_EXIT_CODE -ne 0 ]; then
-            echo "❌ Error: Curl failed with exit code $CURL_EXIT_CODE"
-            echo "Response: $TEST_RESPONSE"
-            echo "💡 Check: JIRA_BASE_URL format (should be https://company.atlassian.net)"
-            exit 1
-          fi
-          
-          TEST_HTTP_CODE=$(echo "$TEST_RESPONSE" | tail -c 4)
-          TEST_BODY=$(echo "$TEST_RESPONSE" | head -c -4)
-          
-          echo "Debug: Test HTTP Status: $TEST_HTTP_CODE"
-          echo "Debug: Response body length: ${#TEST_BODY}"
-          
-          if [ "$TEST_HTTP_CODE" = "404" ]; then
-            echo "❌ Error: JIRA ticket ${{ env.ISSUE_KEY }} not found"
-            echo "Response: $TEST_BODY"
-            exit 1
-          elif [ "$TEST_HTTP_CODE" = "401" ]; then
-            echo "❌ Error: Authentication failed. Check JIRA_EMAIL and JIRA_API_TOKEN"
-            echo "Response: $TEST_BODY"
-            exit 1
-          elif [ "$TEST_HTTP_CODE" = "403" ]; then
-            echo "❌ Error: Permission denied. User may not have access to this ticket"
-            echo "Response: $TEST_BODY"
-            exit 1
-          elif [ "$TEST_HTTP_CODE" != "200" ]; then
-            echo "❌ Error: Unexpected response when checking ticket"
-            echo "HTTP Status: $TEST_HTTP_CODE"
-            echo "Response: $TEST_BODY"
-            exit 1
-          fi
-          
-          echo "✅ JIRA ticket ${{ env.ISSUE_KEY }} exists and is accessible"
-          
-          # Now post the comment
-          echo "Posting comment to JIRA..."
-          
-          set +e  # Don't exit on curl failure
-          RESPONSE=$(timeout 30 curl -s -w "%{http_code}" -X POST \
-            -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
-            -H "Content-Type: application/json" \
-            -H "Accept: application/json" \
-            --data "{\"body\": {\"type\": \"doc\", \"version\": 1, \"content\": [{\"type\": \"paragraph\", \"content\": [{\"type\": \"text\", \"text\": \"Commit ${{ github.sha }} by ${{ github.actor }}: ${{ env.COMMIT_MSG }}\"}]}]}}" \
-            "$JIRA_BASE_CLEAN/rest/api/3/issue/${{ env.ISSUE_KEY }}/comment" 2>&1)
-          
-          CURL_EXIT_CODE=$?
-          set -e  # Re-enable exit on error
-          
-          if [ $CURL_EXIT_CODE -eq 124 ]; then
-            echo "❌ Error: Comment request timed out (30 seconds)"
-            exit 1
-          elif [ $CURL_EXIT_CODE -ne 0 ]; then
-            echo "❌ Error: Comment curl failed with exit code $CURL_EXIT_CODE"
-            echo "Response: $RESPONSE"
-            exit 1
-          fi
-          
-          HTTP_CODE=$(echo "$RESPONSE" | tail -c 4)
-          BODY=$(echo "$RESPONSE" | head -c -4)
-          
-          echo "Debug: Comment HTTP Status: $HTTP_CODE"
-          echo "Debug: Comment Response: $BODY"
-          
-          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-            echo "✅ Successfully commented on JIRA ticket ${{ env.ISSUE_KEY }}"
-          else
-            echo "❌ Failed to comment on JIRA ticket. HTTP Status: $HTTP_CODE"
-            echo "Response: $BODY"
+          if [ -z "$VALID_TICKETS" ]; then
+            echo "❌ Error: No valid JIRA tickets found or accessible"
             exit 1
           fi
+          
+          echo "✅ Found $(echo "$VALID_TICKETS" | tr ',' '\n' | wc -l) valid JIRA ticket(s): $VALID_TICKETS"
+          echo "Debug: Ticket links: $TICKET_LINKS"
+          
+          # Now post comments to all valid tickets
+          echo "📝 Posting comments to JIRA tickets..."
+          
+          IFS=',' read -ra VALID_TICKET_ARRAY <<< "$VALID_TICKETS"
+          for ISSUE_KEY in "${VALID_TICKET_ARRAY[@]}"; do
+            # Trim whitespace
+            ISSUE_KEY=$(echo "$ISSUE_KEY" | tr -d ' ')
+            
+            echo "💬 Commenting on $ISSUE_KEY..."
+            
+            set +e  # Don't exit on curl failure
+            RESPONSE=$(timeout 30 curl -s -w "%{http_code}" -X POST \
+              -u "$JIRA_EMAIL_SECRET:$JIRA_TOKEN_SECRET" \
+              -H "Content-Type: application/json" \
+              -H "Accept: application/json" \
+              --data "{\"body\": {\"type\": \"doc\", \"version\": 1, \"content\": [{\"type\": \"paragraph\", \"content\": [{\"type\": \"text\", \"text\": \"🚀 Commit \"}, {\"type\": \"text\", \"text\": \"${{ github.sha }}\", \"marks\": [{\"type\": \"code\"}]}, {\"type\": \"text\", \"text\": \" by ${{ github.actor }}\\n\\n📋 Related tickets: $TICKET_LINKS\\n\\n💬 Commit message: ${{ env.COMMIT_MSG }}\"}]}]}}" \
+              "$JIRA_BASE_CLEAN/rest/api/3/issue/$ISSUE_KEY/comment" 2>&1)
+            
+            CURL_EXIT_CODE=$?
+            set -e  # Re-enable exit on error
+            
+            if [ $CURL_EXIT_CODE -eq 124 ]; then
+              echo "⚠️ Warning: Comment request timed out for $ISSUE_KEY (30 seconds)"
+              continue
+            elif [ $CURL_EXIT_CODE -ne 0 ]; then
+              echo "⚠️ Warning: Comment curl failed for $ISSUE_KEY with exit code $CURL_EXIT_CODE"
+              echo "Response: $RESPONSE"
+              continue
+            fi
+            
+            HTTP_CODE=$(echo "$RESPONSE" | tail -c 4)
+            BODY=$(echo "$RESPONSE" | head -c -4)
+            
+            echo "Debug: Comment HTTP Status for $ISSUE_KEY: $HTTP_CODE"
+            
+            if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+              echo "✅ Successfully commented on JIRA ticket $ISSUE_KEY"
+            else
+              echo "⚠️ Warning: Failed to comment on JIRA ticket $ISSUE_KEY. HTTP Status: $HTTP_CODE"
+              echo "Response: $BODY"
+            fi
+          done
+          
+          echo ""
+          echo "🎉 Comment posting completed for all valid tickets!"
