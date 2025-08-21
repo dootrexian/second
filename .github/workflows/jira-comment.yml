@@ -30,7 +30,6 @@ jobs:
           fi
 
       - name: Comment on Jira
-      - name: Comment on Jira
         if: env.ISSUE_KEY != ''
         run: |
           echo "Debug: Commenting on JIRA ticket: ${{ env.ISSUE_KEY }}"
