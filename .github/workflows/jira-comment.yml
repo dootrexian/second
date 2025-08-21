@@ -1,0 +1,26 @@
+name: Comment on Jira Issue from Commit
+
+on:
+  push:
+    branches:
+      - dev
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get commit message
+        id: get_commit
+        run: |
+          echo "COMMIT_MSG=$(git log -1 --pretty=%B)" >> $GITHUB_ENV
+          ISSUE_KEY=$(echo "$COMMIT_MSG" | grep -oE 'GJ-[0-9]+' | head -1 || true)
+          echo "ISSUE_KEY=$ISSUE_KEY" >> $GITHUB_ENV
+
+      - name: Comment on Jira
+        if: env.ISSUE_KEY != ''
+        run: |
+          curl -X POST \
+            -H "Authorization: Basic $(echo -n ${{ secrets.JIRA_EMAIL }}:${{ secrets.JIRA_API_TOKEN }} | base64)" \
+            -H "Content-Type: application/json" \
+            --data "{\"body\": \"Commit ${{ github.sha }} by ${{ github.actor }}: ${{ env.COMMIT_MSG }}\"}" \
+            "${{ secrets.JIRA_BASE_URL }}/rest/api/3/issue/${{ env.ISSUE_KEY }}/comment"
