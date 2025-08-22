@@ -1,35 +1,24 @@
+name: PR Title Prefix
+
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
+    # Optional: scope to branches
     branches:
-      - main  # change as needed
+      - main, dev
 
 jobs:
-  validate-commit:
-    name: PR Commit Message Prefix Check
+  title-check:
+    name: PR Title Prefix Check
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
     steps:
-      - name: Validate head commit message
-        uses: actions/github-script@v7
+      - uses: actions/github-script@v7
         with:
           script: |
-            const {owner, repo} = context.repo;
-            const pull_number = context.payload.pull_request.number;
-            const commits = await github.paginate(
-              github.rest.pulls.listCommits,
-              { owner, repo, pull_number, per_page: 100 }
-            );
-            if (!commits.length) {
-              core.setFailed('No commits found in this PR.');
-              return;
-            }
-            const head = commits[commits.length - 1];
-            const msg = head.commit.message || '';
-            const ok = /^GJ-\d+/.test(msg);
+            const title = context.payload.pull_request?.title?.trim() ?? '';
+            const ok = /^GJ-\d+/.test(title);
             if (!ok) {
-              core.setFailed(`Head commit message must start with "GJ-<number>" (e.g., GJ-123). Got: "${msg.split('\n')[0]}"`);
-            } else {
-              core.info(`Commit message OK: ${msg.split('\n')[0]}`);
+              core.setFailed(`PR title must start with "GJ-<number>" (e.g., GJ-123). Got: "${title}"`);
             }
