@@ -5,7 +5,8 @@ on:
     types: [opened, edited, synchronize, reopened]
     # Optional: scope to branches
     branches:
-      - main, dev
+      - main
+      - dev
 
 jobs:
   title-check:
@@ -22,3 +23,4 @@ jobs:
             if (!ok) {
               core.setFailed(`PR title must start with "GJ-<number>" (e.g., GJ-123). Got: "${title}"`);
             }
+
