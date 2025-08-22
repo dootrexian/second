@@ -1,0 +1,21 @@
+name: PR Title Prefix
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  title-check:
+    name: PR Title Prefix Check
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const title = context.payload.pull_request?.title?.trim() ?? '';
+            const ok = /^GJ-\d+/.test(title);
+            if (!ok) {
+              core.setFailed(`PR title must start with "GJ-<number>" (e.g., GJ-123). Got: "${title}"`);
+            }
