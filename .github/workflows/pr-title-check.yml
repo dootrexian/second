@@ -32,4 +32,6 @@ jobs:
               core.setFailed(`Head commit message must start with "GJ-<number>" (e.g., GJ-123). Got: "${msg.split('\n')[0]}"`);
             } else {
               core.info(`Commit message OK: ${msg.split('\n')[0]}`);
+
             }
+            
